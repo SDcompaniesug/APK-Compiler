@@ -115,7 +115,7 @@ export async function startBuild(zip, output = "apk") {
     ]);
     await sandbox.runCommand({ cmd: "bash", args: ["/vercel/sandbox/run-build.sh"], detached: true, env: { OUTPUT_KIND: output }, timeoutMs: 45 * 60 * 1000 });
     await put("jobs/" + id + ".json", JSON.stringify({ id, name, output, createdAt: new Date().toISOString() }), {
-      access: "public", contentType: "application/json", addRandomSuffix: false,
+      access: "private", contentType: "application/json", addRandomSuffix: false,
       allowOverwrite: true
     });
     return { jobId: id, state: "queued", statusUrl: "/api/status?id=" + id };
@@ -144,5 +144,5 @@ export async function getBuild(id) {
     });
     artifacts[key] = { url: blob.url, size: file.length };
   }
-  return { jobId: id, state: Object.keys(artifacts).length ? "complete" : "failed", artifacts };
+  return { jobId: id, state: Object.keys(artifacts).length ? "complete" : "failed", artifacts: Object.fromEntries(Object.entries(artifacts).map(([key, value]) => [key, { ...value, url: "/api/download?id=" + id + "&file=" + key }])) };
 }
