@@ -142,7 +142,7 @@ else
   both) TASKS=(assembleDebug bundleDebug);;
   *) echo '{"state":"failed","error":"Unsupported output format."}' > "$BASE/status.json"; exit 2;;
  esac
- "${GRADLE_CMD[@]}" --no-daemon "${TASKS[@]}" > "$BASE/build.log" 2>&1 || RC=$?
+ "\${GRADLE_CMD[@]}" --no-daemon "\${TASKS[@]}" > "$BASE/build.log" 2>&1 || RC=$?
  if [ "$RC" -eq 0 ]; then
   find "$ROOT" -path '*/build/outputs/apk/debug/*.apk' -type f -exec cp {} "$BASE/output/" \;
   find "$ROOT" -path '*/build/outputs/bundle/debug/*.aab' -type f -exec cp {} "$BASE/output/" \;
