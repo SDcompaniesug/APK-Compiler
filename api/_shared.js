@@ -117,6 +117,7 @@ if [ "$BUILD_KIND" = "flutter" ]; then
 else
  cd "$ROOT"
  GRADLE_CMD=()
+ WRAPPER_PROPS="$ROOT/gradle/wrapper/gradle-wrapper.properties"
  if [ -f ./gradlew ]; then
   chmod +x ./gradlew
   GRADLE_CMD=(./gradlew)
@@ -140,9 +141,39 @@ else
   apk) TASKS=(assembleDebug);;
   aab) TASKS=(bundleDebug);;
   both) TASKS=(assembleDebug bundleDebug);;
-  *) echo '{"state":"failed","error":"Unsupported output format."}' > "$BASE/status.json"; exit 2;;
+  *) echo '{"state":"failed","error":"Unsupported output format."}' > "$BASE/status.json"; exit 2 ;;
  esac
- "\${GRADLE_CMD[@]}" --no-daemon "\${TASKS[@]}" > "$BASE/build.log" 2>&1 || RC=$?
+ # First build attempt uses the project's configured wrapper (or fallback Gradle).
+ if ! "\${GRADLE_CMD[@]}" --no-daemon "\${TASKS[@]}" > "$BASE/build.log" 2>&1; then
+  RC=$?
+  # Android Gradle Plugin prints its actual minimum Gradle version. Upgrade only
+  # when the wrapper is demonstrably too old, preserving compatibility for older projects.
+  REQUIRED_GRADLE=$(python3 - "$BASE/build.log" <<'PY'
+import re,sys
+s=open(sys.argv[1],errors='replace').read()
+m=re.search(r'Minimum supported Gradle version is ([0-9]+(?:\.[0-9]+){1,2})\.\s*Current version is ([0-9]+(?:\.[0-9]+){1,2})',s)
+if m:
+ def v(x): return tuple(int(p) for p in x.split('.'))
+ if v(m.group(1)) > v(m.group(2)): print(m.group(1))
+PY
+  )
+  if [ -n "$REQUIRED_GRADLE" ] && [ -x ./gradlew ] && [ -f "$WRAPPER_PROPS" ]; then
+   python3 - "$WRAPPER_PROPS" "$REQUIRED_GRADLE" <<'PY'
+import re,sys
+p,v=sys.argv[1],sys.argv[2]
+s=open(p,encoding='utf-8').read()
+url=f'https\\://services.gradle.org/distributions/gradle-{v}-bin.zip'
+if re.search(r'(?m)^distributionUrl=',s):
+ s=re.sub(r'(?m)^distributionUrl=.*$', 'distributionUrl='+url, s)
+else:
+ s += ('\n' if s and not s.endswith('\n') else '')+'distributionUrl='+url+'\n'
+open(p,'w',encoding='utf-8').write(s)
+PY
+   echo "Gradle wrapper was below Android Gradle Plugin minimum; retrying with Gradle $REQUIRED_GRADLE." > "$BASE/build.log"
+   "\${GRADLE_CMD[@]}" --no-daemon "\${TASKS[@]}" >> "$BASE/build.log" 2>&1 || RC=$?
+  fi
+ fi
+
  if [ "$RC" -eq 0 ]; then
   find "$ROOT" -path '*/build/outputs/apk/debug/*.apk' -type f -exec cp {} "$BASE/output/" \;
   find "$ROOT" -path '*/build/outputs/bundle/debug/*.aab' -type f -exec cp {} "$BASE/output/" \;
