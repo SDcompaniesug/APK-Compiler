@@ -138,7 +138,7 @@ export async function getBuild(id) {
     const file = await sandbox.readFileToBuffer({ path: state[key] });
     if (!file?.length) continue;
     const blob = await put("builds/" + id + "/" + key + (key === "apk" ? ".apk" : ".aab"), file, {
-      access: "public",
+      access: "private",
       contentType: key === "apk" ? "application/vnd.android.package-archive" : "application/octet-stream",
       addRandomSuffix: false
     });
