@@ -1,6 +1,6 @@
 # APK Compiler
 
-A Vercel-hosted Android Gradle build service. Users upload a ZIP containing a Java, Kotlin, or mixed Android Gradle project and receive a debug APK, debug AAB, or both.
+A Vercel-hosted Android Gradle build service. Users upload a ZIP containing a Java, Kotlin, Jetpack Compose, Flutter, or mixed Android Gradle project and receive a debug APK, debug AAB, or both.
 
 ## Live service
 
@@ -51,3 +51,12 @@ The Android build snapshot is a separately managed Vercel Sandbox snapshot. Refr
 - Blob storage is private; artifact downloads pass through the service.
 - Debug builds only. Release signing and keystore handling are intentionally not supported.
 - Treat uploaded Android Gradle build scripts as untrusted code.
+
+
+## Supported project types
+
+- **Native Android / Java / Kotlin:** standard Gradle Android projects.
+- **Jetpack Compose:** Kotlin Android Gradle projects using the Compose compiler/plugin and Compose dependencies; the existing `assembleDebug` and `bundleDebug` tasks are used.
+- **Flutter:** projects containing `pubspec.yaml` and an `android/` Gradle subproject. The isolated runner installs Flutter stable and missing Android SDK 36 prerequisites, resolves Dart packages, then builds a debug APK, AAB, or both.
+
+Flutter builds require outbound network access on the first build to fetch the Flutter SDK, Android SDK components, Dart packages and Gradle dependencies. All outputs are debug-signed; release signing is not supported.
