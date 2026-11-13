@@ -116,18 +116,33 @@ if [ "$BUILD_KIND" = "flutter" ]; then
  fi
 else
  cd "$ROOT"
- GRADLE=""
- if [ -x ./gradlew ]; then GRADLE=./gradlew
- elif [ -x /tmp/gradle-8.7/bin/gradle ]; then GRADLE=/tmp/gradle-8.7/bin/gradle
- else GRADLE=gradle
+ GRADLE_CMD=()
+ if [ -f ./gradlew ]; then
+  chmod +x ./gradlew
+  GRADLE_CMD=(./gradlew)
+ elif [ -x /tmp/gradle-8.9/bin/gradle ]; then
+  GRADLE_CMD=(/tmp/gradle-8.9/bin/gradle)
+ else
+  mkdir -p /tmp/gradle-8.9
+  if [ ! -x /tmp/gradle-8.9/bin/gradle ]; then
+   curl -fsSL https://services.gradle.org/distributions/gradle-8.9-bin.zip -o /tmp/gradle-8.9.zip >> "$BASE/build.log" 2>&1 || {
+    echo '{"state":"failed","error":"Could not download Gradle 8.9 and the project ZIP does not include gradlew."}' > "$BASE/status.json"
+    exit 2
+   }
+   unzip -q -o /tmp/gradle-8.9.zip -d /tmp >> "$BASE/build.log" 2>&1 || {
+    echo '{"state":"failed","error":"Could not extract Gradle 8.9."}' > "$BASE/status.json"
+    exit 2
+   }
+  fi
+  GRADLE_CMD=(/tmp/gradle-8.9/bin/gradle)
  fi
  case "$OUTPUT_KIND" in
-  apk) TASKS="assembleDebug";;
-  aab) TASKS="bundleDebug";;
-  both) TASKS="assembleDebug bundleDebug";;
+  apk) TASKS=(assembleDebug);;
+  aab) TASKS=(bundleDebug);;
+  both) TASKS=(assembleDebug bundleDebug);;
   *) echo '{"state":"failed","error":"Unsupported output format."}' > "$BASE/status.json"; exit 2;;
  esac
- $GRADLE --no-daemon $TASKS > "$BASE/build.log" 2>&1 || RC=$?
+ "${GRADLE_CMD[@]}" --no-daemon "${TASKS[@]}" > "$BASE/build.log" 2>&1 || RC=$?
  if [ "$RC" -eq 0 ]; then
   find "$ROOT" -path '*/build/outputs/apk/debug/*.apk' -type f -exec cp {} "$BASE/output/" \;
   find "$ROOT" -path '*/build/outputs/bundle/debug/*.aab' -type f -exec cp {} "$BASE/output/" \;
