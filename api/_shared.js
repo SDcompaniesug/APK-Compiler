@@ -68,9 +68,10 @@ case "$OUTPUT_KIND" in
  *) echo '{"state":"failed","error":"Unsupported output format."}' > "$BASE/status.json"; exit 2;;
 esac
 echo '{"state":"building"}' > "$BASE/status.json"
+RC=0
 $GRADLE --no-daemon $TASKS > "$BASE/build.log" 2>&1 || RC=$?
 
-if [ "${RC:-0}" -ne 0 ]; then
+if [ "$RC" -ne 0 ]; then
  python3 - <<'PY'
 p='/vercel/sandbox/build.log'
 s=open(p,errors='replace').read()
