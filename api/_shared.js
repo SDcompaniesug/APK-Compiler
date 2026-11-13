@@ -180,11 +180,11 @@ PY
 import re,sys
 p,v=sys.argv[1],sys.argv[2]
 s=open(p,encoding="utf-8").read()
-url=f"https\\://services.gradle.org/distributions/gradle-{v}-bin.zip"
+url="https"+chr(92)+"://services.gradle.org/distributions/gradle-"+v+"-bin.zip"
 if re.search(r"(?m)^distributionUrl=",s):
  s=re.sub(r"(?m)^distributionUrl=.*$", "distributionUrl="+url, s)
 else:
- s += ("\\n" if s and not s.endswith("\\n") else "")+"distributionUrl="+url+"\\n"
+ s += (chr(10) if s and not s.endswith(chr(10)) else "")+"distributionUrl="+url+chr(10)
 open(p,"w",encoding="utf-8").write(s)
 PY
     fi
