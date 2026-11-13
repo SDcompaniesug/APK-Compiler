@@ -144,7 +144,9 @@ else
   *) echo '{"state":"failed","error":"Unsupported output format."}' > "$BASE/status.json"; exit 2 ;;
  esac
  # First build attempt uses the project's configured wrapper (or fallback Gradle).
- if ! "\${GRADLE_CMD[@]}" --no-daemon "\${TASKS[@]}" > "$BASE/build.log" 2>&1; then
+ if "\${GRADLE_CMD[@]}" --no-daemon "\${TASKS[@]}" > "$BASE/build.log" 2>&1; then
+  RC=0
+ else
   RC=$?
   # Android Gradle Plugin prints its actual minimum Gradle version. Upgrade only
   # when the wrapper is demonstrably too old, preserving compatibility for older projects.
