@@ -129,7 +129,7 @@ for base,dirs,files in os.walk(root):
   paths.append(os.path.join(base,"gradle.properties"))
 if os.path.isfile(global_props):
  paths.append(global_props)
-pattern=re.compile(r"^\\s*(?:(?:systemProp|org\\.gradle\\.project)\\.)?android\\.aapt2FromMavenOverride\\s*=.*(?:\\n|$)",re.M)
+pattern=re.compile(r"^\s*(?:(?:systemProp|org\.gradle\.project)\.)?android\.aapt2FromMavenOverride\s*=.*(?:\n|$)",re.M)
 for path in paths:
  try:
   with open(path,encoding="utf-8") as f: original=f.read()
