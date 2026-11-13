@@ -213,13 +213,55 @@ export async function startBuildFromBlob(pathname, output = "apk") {
   return job;
 }
 
+
+async function readPrivateJson(pathname) {
+  try {
+    const blob = await get(pathname, { access: "private" });
+    if (!blob || blob.statusCode !== 200 || !blob.stream) return null;
+    const chunks = [];
+    const reader = blob.stream.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(Buffer.from(value));
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    return null;
+  }
+}
+
+async function saveBuildResult(id, result) {
+  await put("results/" + id + ".json", JSON.stringify(result), {
+    access: "private",
+    contentType: "application/json",
+    addRandomSuffix: false,
+    allowOverwrite: true
+  });
+  return result;
+}
+
 export async function getBuild(id) {
   if (!/^[a-f0-9]{32}$/.test(id || "")) throw new Error("Invalid job ID.");
+  const cached = await readPrivateJson("results/" + id + ".json");
+  if (cached) return cached;
+
   const sandbox = await Sandbox.get({ name: "apk-build-" + id, resume: true });
   const raw = await sandbox.readFileToBuffer({ path: "/vercel/sandbox/status.json" });
   if (!raw) return { jobId: id, state: "queued" };
   const state = JSON.parse(raw.toString("utf8"));
+
+  if (state.state === "failed") {
+    const result = await saveBuildResult(id, { jobId: id, state: "failed", error: state.error || "Build failed." });
+    try { await sandbox.stop(); } catch {}
+    return result;
+  }
   if (state.state !== "complete") return { jobId: id, ...state };
+
   const artifacts = {};
   for (const key of ["apk", "aab"]) {
     if (!state[key]) continue;
@@ -233,5 +275,21 @@ export async function getBuild(id) {
     });
     artifacts[key] = { url: blob.url, size: file.length };
   }
-  return { jobId: id, state: Object.keys(artifacts).length ? "complete" : "failed", artifacts: Object.fromEntries(Object.entries(artifacts).map(([key, value]) => [key, { ...value, url: "/api/download?id=" + id + "&file=" + key }])) };
+
+  const result = Object.keys(artifacts).length
+    ? {
+        jobId: id,
+        state: "complete",
+        artifacts: Object.fromEntries(
+          Object.entries(artifacts).map(([key, value]) => [
+            key,
+            { ...value, url: "/api/download?id=" + id + "&file=" + key }
+          ])
+        )
+      }
+    : { jobId: id, state: "failed", error: "Build completed but no APK or AAB artifact could be read." };
+
+  await saveBuildResult(id, result);
+  try { await sandbox.stop(); } catch {}
+  return result;
 }
