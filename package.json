@@ -1,0 +1,17 @@
+{
+  "name": "apk-compiler",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vercel dev"
+  },
+  "dependencies": {
+    "@vercel/sandbox": "^2.0.0",
+    "@vercel/blob": "^2.0.0",
+    "busboy": "^1.6.0"
+  },
+  "devDependencies": {
+    "vercel": "^48.0.0"
+  }
+}
