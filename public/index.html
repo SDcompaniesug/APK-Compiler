@@ -1,1 +1,39 @@
-<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>APK Compiler</title><style>body{font:16px system-ui;background:#f5f7fb;color:#172337;margin:0}.wrap{max-width:650px;margin:8vh auto;padding:24px}.card{background:white;border:1px solid #e4eaf3;border-radius:18px;padding:26px;box-shadow:0 12px 40px #1723370d}h1{margin:0 0 8px}p{color:#66758b}input,select,button{font:inherit;padding:12px;border:1px solid #d8e0eb;border-radius:10px;width:100%;box-sizing:border-box;margin:8px 0}button{background:#3978f6;color:white;border:0;font-weight:650;cursor:pointer}a{color:#2867d9;display:block;margin:10px 0;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#b42318}</style><div class="wrap"><div class="card"><h1>APK Compiler</h1><p>Build a debug APK or Android App Bundle from your Gradle project ZIP.</p><form id="f"><input name="project" type="file" accept=".zip,application/zip" required><select name="output"><option value="apk">Debug APK</option><option value="aab">Debug AAB</option><option value="both">Both APK + AAB</option></select><button>Start build</button></form><p id="status">Choose a project ZIP to begin.</p><div id="links"></div><pre id="err"></pre></div></div><script>const f=document.querySelector('#f'),s=document.querySelector('#status'),l=document.querySelector('#links'),e=document.querySelector('#err');f.onsubmit=async ev=>{ev.preventDefault();s.textContent='Uploading project…';l.innerHTML='';e.textContent='';try{const r=await fetch('/api/build',{method:'POST',body:new FormData(f)});const j=await r.json();if(!r.ok)throw Error(j.error);s.textContent='Build queued: '+j.jobId;const poll=async()=>{const q=await fetch('/api/status?id='+j.jobId);const v=await q.json();s.textContent='Build status: '+v.state;if(v.state==='complete'){l.innerHTML=Object.entries(v.artifacts||{}).map(([k,a])=>'<a href="'+a.url+'" target="_blank" rel="noopener">Download '+k.toUpperCase()+' ('+a.size+' bytes)</a>').join('');return}if(v.state==='failed'){e.textContent=v.error||'Build failed';return}setTimeout(poll,4000)};poll()}catch(x){s.textContent='Could not start build';e.textContent=x.message}}</script></html>
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>APK Compiler</title><style>body{font:16px system-ui;background:#f5f7fb;color:#172337;margin:0}.wrap{max-width:650px;margin:8vh auto;padding:24px}.card{background:white;border:1px solid #e4eaf3;border-radius:18px;padding:26px;box-shadow:0 12px 40px #1723370d}h1{margin:0 0 8px}p{color:#66758b}input,select,button{font:inherit;padding:12px;border:1px solid #d8e0eb;border-radius:10px;width:100%;box-sizing:border-box;margin:8px 0}button{background:#3978f6;color:white;border:0;font-weight:650;cursor:pointer}a{color:#2867d9;display:block;margin:10px 0;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#b42318}</style><div class="wrap"><div class="card"><h1>APK Compiler</h1><p>Build a debug APK or Android App Bundle from your Gradle project ZIP.</p><form id="f"><input name="project" type="file" accept=".zip,application/zip" required><select name="output"><option value="apk">Debug APK</option><option value="aab">Debug AAB</option><option value="both">Both APK + AAB</option></select><button>Start build</button></form><p id="status">Choose a project ZIP to begin.</p><div id="links"></div><pre id="err"></pre></div></div><script>
+const f=document.querySelector('#f'),s=document.querySelector('#status'),l=document.querySelector('#links'),e=document.querySelector('#err');
+function putFile(url,file){
+ return new Promise((resolve,reject)=>{
+  const x=new XMLHttpRequest();x.open('PUT',url);x.setRequestHeader('Content-Type','application/zip');
+  x.upload.onprogress=v=>{if(v.lengthComputable)s.textContent='Uploading project: '+Math.round(v.loaded/v.total*100)+'%';};
+  x.onload=()=>x.status>=200&&x.status<300?resolve():reject(new Error('Blob upload failed ('+x.status+'): '+x.responseText));
+  x.onerror=()=>reject(new Error('Network error while uploading ZIP.'));
+  x.send(file);
+ });
+}
+f.onsubmit=async ev=>{
+ ev.preventDefault();l.innerHTML='';e.textContent='';
+ const file=f.elements.project.files[0];if(!file)return;
+ if(!file.name.toLowerCase().endsWith('.zip')){e.textContent='Choose a .zip file.';return;}
+ if(file.size>50*1024*1024){e.textContent='Maximum ZIP size is 50 MB.';return;}
+ try{
+  s.textContent='Preparing secure upload…';
+  const signed=await fetch('/api/upload-url',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({filename:file.name})});
+  const sign=await signed.json();if(!signed.ok)throw new Error(sign.error||'Could not prepare upload.');
+  await putFile(sign.uploadUrl,file);
+  s.textContent='Starting Android build…';
+  const started=await fetch('/api/build',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({pathname:sign.pathname,output:f.elements.output.value})});
+  const job=await started.json();if(!started.ok)throw new Error(job.error||'Could not start build.');
+  s.textContent='Build queued: '+job.jobId;
+  const poll=async()=>{
+   const q=await fetch('/api/status?id='+encodeURIComponent(job.jobId));const v=await q.json();
+   s.textContent='Build status: '+v.state;
+   if(v.state==='complete'){
+    l.innerHTML=Object.entries(v.artifacts||{}).map(([k,a])=>'<a href="'+a.url+'" download>Download '+k.toUpperCase()+' ('+a.size+' bytes)</a>').join('');
+    return;
+   }
+   if(v.state==='failed'){e.textContent=v.error||'Build failed';return;}
+   setTimeout(poll,4000);
+  };
+  poll();
+ }catch(x){s.textContent='Build could not start';e.textContent=x.message;}
+};
+</script></html>
