@@ -159,20 +159,38 @@ if m:
  if v(m.group(1)) > v(m.group(2)): print(m.group(1))
 PY
   )
-  if [ -n "$REQUIRED_GRADLE" ] && [ -x ./gradlew ] && [ -f "$WRAPPER_PROPS" ]; then
-   python3 - "$WRAPPER_PROPS" "$REQUIRED_GRADLE" <<'PY'
+  if [ -n "$REQUIRED_GRADLE" ]; then
+   # Run the exact Gradle version required by AGP directly. Re-invoking
+   # gradlew after editing its properties can still pick up a stale cached
+   # distribution in some wrapper setups, so use the downloaded binary.
+   GRADLE_HOME="/tmp/gradle-$REQUIRED_GRADLE"
+   mkdir -p "$GRADLE_HOME"
+   if [ ! -x "$GRADLE_HOME/bin/gradle" ]; then
+    curl -fsSL "https://services.gradle.org/distributions/gradle-$REQUIRED_GRADLE-bin.zip" -o "/tmp/gradle-$REQUIRED_GRADLE.zip" >> "$BASE/build.log" 2>&1 || {
+     echo "Could not download required Gradle $REQUIRED_GRADLE." >> "$BASE/build.log"
+     RC=1
+    }
+    if [ "$RC" -eq 0 ]; then
+     unzip -q -o "/tmp/gradle-$REQUIRED_GRADLE.zip" -d /tmp >> "$BASE/build.log" 2>&1 || RC=$?
+    fi
+   fi
+   if [ "$RC" -eq 0 ] && [ -x "$GRADLE_HOME/bin/gradle" ]; then
+    if [ -f "$WRAPPER_PROPS" ]; then
+     python3 - "$WRAPPER_PROPS" "$REQUIRED_GRADLE" <<'PY'
 import re,sys
 p,v=sys.argv[1],sys.argv[2]
-s=open(p,encoding='utf-8').read()
-url=f'https\\://services.gradle.org/distributions/gradle-{v}-bin.zip'
-if re.search(r'(?m)^distributionUrl=',s):
- s=re.sub(r'(?m)^distributionUrl=.*$', 'distributionUrl='+url, s)
+s=open(p,encoding="utf-8").read()
+url=f"https\\://services.gradle.org/distributions/gradle-{v}-bin.zip"
+if re.search(r"(?m)^distributionUrl=",s):
+ s=re.sub(r"(?m)^distributionUrl=.*$", "distributionUrl="+url, s)
 else:
- s += ('\n' if s and not s.endswith('\n') else '')+'distributionUrl='+url+'\n'
-open(p,'w',encoding='utf-8').write(s)
+ s += ("\\n" if s and not s.endswith("\\n") else "")+"distributionUrl="+url+"\\n"
+open(p,"w",encoding="utf-8").write(s)
 PY
-   echo "Gradle wrapper was below Android Gradle Plugin minimum; retrying with Gradle $REQUIRED_GRADLE." > "$BASE/build.log"
-   "\${GRADLE_CMD[@]}" --no-daemon "\${TASKS[@]}" >> "$BASE/build.log" 2>&1 || RC=$?
+    fi
+    echo "Retrying with Android Gradle Plugin-required Gradle $REQUIRED_GRADLE." >> "$BASE/build.log"
+    "$GRADLE_HOME/bin/gradle" --no-daemon "${TASKS[@]}" >> "$BASE/build.log" 2>&1 || RC=$?
+   fi
   fi
  fi
 
