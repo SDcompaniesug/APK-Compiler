@@ -7,8 +7,8 @@
     "dev": "vercel dev"
   },
   "dependencies": {
-    "@vercel/sandbox": "^2.0.0",
-    "@vercel/blob": "^2.0.0",
+    "@vercel/sandbox": "^4.0.0",
+    "@vercel/blob": "^2.9.0",
     "busboy": "^1.6.0"
   },
   "devDependencies": {
