@@ -3,15 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "scripts": {
-    "dev": "vercel dev"
-  },
   "dependencies": {
     "@vercel/sandbox": "^4.0.0",
     "@vercel/blob": "^2.9.0",
     "busboy": "^1.6.0"
-  },
-  "devDependencies": {
-    "vercel": "^48.0.0"
   }
 }
