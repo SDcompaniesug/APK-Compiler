@@ -144,7 +144,7 @@ else
   *) echo '{"state":"failed","error":"Unsupported output format."}' > "$BASE/status.json"; exit 2 ;;
  esac
  # First build attempt uses the project's configured wrapper (or fallback Gradle).
- if "\${GRADLE_CMD[@]}" --no-daemon "\${TASKS[@]}" > "$BASE/build.log" 2>&1; then
+ if "${"$"}{GRADLE_CMD[@]}" --no-daemon "${"$"}{TASKS[@]}" > "$BASE/build.log" 2>&1; then
   RC=0
  else
   RC=$?
@@ -189,7 +189,7 @@ open(p,"w",encoding="utf-8").write(s)
 PY
     fi
     echo "Retrying with Android Gradle Plugin-required Gradle $REQUIRED_GRADLE." >> "$BASE/build.log"
-    "$GRADLE_HOME/bin/gradle" --no-daemon "\${TASKS[@]}" >> "$BASE/build.log" 2>&1 || RC=$?
+    "$GRADLE_HOME/bin/gradle" --no-daemon "${"$"}{TASKS[@]}" >> "$BASE/build.log" 2>&1 || RC=$?
    fi
   fi
  fi
