@@ -11,7 +11,7 @@ export function json(res, status, data) {
 export const newId = () => randomUUID().replaceAll("-", "");
 
 const buildScript = String.raw`#!/usr/bin/env bash
-set +e
+set -Eeuo pipefail
 BASE=/vercel/sandbox
 mkdir -p "$BASE/work" "$BASE/output"
 python3 - <<'PY'
@@ -37,7 +37,7 @@ except Exception as e:
 PY
 if [ $? -ne 0 ]; then exit 2; fi
 ROOT="$BASE/work"
-SETTINGS=$(find "$ROOT" -maxdepth 5 -type f \\( -name settings.gradle -o -name settings.gradle.kts \\) -print -quit)
+SETTINGS=$(find "$ROOT" -maxdepth 5 -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)
 if [ -z "$SETTINGS" ]; then
  echo '{"state":"failed","error":"No Gradle settings.gradle or settings.gradle.kts was found in the ZIP."}' > "$BASE/status.json"
  exit 2
@@ -67,9 +67,9 @@ case "$OUTPUT_KIND" in
  *) echo '{"state":"failed","error":"Unsupported output format."}' > "$BASE/status.json"; exit 2;;
 esac
 echo '{"state":"building"}' > "$BASE/status.json"
-$GRADLE --no-daemon $TASKS > "$BASE/build.log" 2>&1
-RC=$?
-if [ $RC -ne 0 ]; then
+$GRADLE --no-daemon $TASKS > "$BASE/build.log" 2>&1 || RC=$?
+
+if [ "${RC:-0}" -ne 0 ]; then
  python3 - <<'PY'
 p='/vercel/sandbox/build.log'
 s=open(p,errors='replace').read()
@@ -77,8 +77,8 @@ open('/vercel/sandbox/status.json','w').write(__import__('json').dumps({'state':
 PY
  exit $RC
 fi
-find "$ROOT" -path '*/build/outputs/apk/debug/*.apk' -type f -exec cp {} "$BASE/output/" \\
-find "$ROOT" -path '*/build/outputs/bundle/debug/*.aab' -type f -exec cp {} "$BASE/output/" \\
+find "$ROOT" -path '*/build/outputs/apk/debug/*.apk' -type f -exec cp {} "$BASE/output/" \;
+find "$ROOT" -path '*/build/outputs/bundle/debug/*.aab' -type f -exec cp {} "$BASE/output/" \;
 python3 - <<'PY'
 import json,glob,os
 a=glob.glob('/vercel/sandbox/output/*.apk')
