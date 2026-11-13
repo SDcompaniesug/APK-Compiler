@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import build from "./api/build.js";
 import status from "./api/status.js";
+import download from "./api/download.js";
 import mcp from "./api/mcp.js";
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -21,6 +22,7 @@ export default async function handler(req, res) {
   try {
     if (url.pathname === "/api/build") return await build(req, res);
     if (url.pathname === "/api/status") return await status(req, res);
+    if (url.pathname === "/api/download") return await download(req, res);
     if (url.pathname === "/api/mcp") {
       if (req.method === "POST") await parseJson(req);
       return await mcp(req, res);
