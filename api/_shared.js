@@ -13,6 +13,7 @@ export const newId = () => randomUUID().replaceAll("-", "");
 const buildScript = String.raw`#!/usr/bin/env bash
 set -Eeuo pipefail
 BASE=/vercel/sandbox
+trap 'rc=$?; echo "{\"state\":\"failed\",\"error\":\"Build runner exited with code $rc\"}" > "$BASE/status.json"' ERR
 mkdir -p "$BASE/work" "$BASE/output"
 python3 - <<'PY'
 import zipfile, os
