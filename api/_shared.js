@@ -116,6 +116,30 @@ if [ "$BUILD_KIND" = "flutter" ]; then
  fi
 else
  cd "$ROOT"
+ # Projects exported from AIDE/Termux may hard-code an AAPT2 binary path that
+ # exists only on the developer's phone. Remove that machine-specific override
+ # so AGP resolves its matching AAPT2 artifact from Maven in the cloud.
+ python3 - "$ROOT" "$HOME/.gradle/gradle.properties" <<'PY'
+import os,re,sys
+root,global_props=sys.argv[1:]
+paths=[]
+for base,dirs,files in os.walk(root):
+ dirs[:] = [d for d in dirs if d not in (".git","build",".gradle")]
+ if "gradle.properties" in files:
+  paths.append(os.path.join(base,"gradle.properties"))
+if os.path.isfile(global_props):
+ paths.append(global_props)
+pattern=re.compile(r"^\\s*(?:(?:systemProp|org\\.gradle\\.project)\\.)?android\\.aapt2FromMavenOverride\\s*=.*(?:\\n|$)",re.M)
+for path in paths:
+ try:
+  with open(path,encoding="utf-8") as f: original=f.read()
+  cleaned=pattern.sub("",original)
+  if cleaned != original:
+   with open(path,"w",encoding="utf-8") as f: f.write(cleaned)
+   print("Removed device-specific AAPT2 override from "+path)
+ except (OSError,UnicodeError) as e:
+  print("Could not inspect "+path+": "+str(e))
+PY
  GRADLE_CMD=()
  WRAPPER_PROPS="$ROOT/gradle/wrapper/gradle-wrapper.properties"
  if [ -f ./gradlew ]; then
