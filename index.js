@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import build from "./api/build.js";
 import status from "./api/status.js";
 import download from "./api/download.js";
+import uploadUrl from "./api/upload-url.js";
 import mcp from "./api/mcp.js";
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -20,7 +21,8 @@ export default async function handler(req, res) {
   const url = new URL(req.url || "/", "https://apk-compiler.local");
   req.query = Object.fromEntries(url.searchParams.entries());
   try {
-    if (url.pathname === "/api/build") return await build(req, res);
+    if (url.pathname === "/api/build") { if ((req.headers["content-type"] || "").includes("application/json")) await parseJson(req); return await build(req, res); }
+    if (url.pathname === "/api/upload-url") { await parseJson(req); return await uploadUrl(req, res); }
     if (url.pathname === "/api/status") return await status(req, res);
     if (url.pathname === "/api/download") return await download(req, res);
     if (url.pathname === "/api/mcp") {
