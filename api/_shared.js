@@ -165,7 +165,8 @@ export async function getBuild(id) {
     const blob = await put("builds/" + id + "/" + key + (key === "apk" ? ".apk" : ".aab"), file, {
       access: "private",
       contentType: key === "apk" ? "application/vnd.android.package-archive" : "application/octet-stream",
-      addRandomSuffix: false
+      addRandomSuffix: false,
+      allowOverwrite: true
     });
     artifacts[key] = { url: blob.url, size: file.length };
   }
