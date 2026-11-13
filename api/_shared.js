@@ -13,17 +13,20 @@ export const newId = () => randomUUID().replaceAll("-", "");
 const buildScript = String.raw`#!/usr/bin/env bash
 set -Eeuo pipefail
 BASE=/vercel/sandbox
-trap 'rc=$?; echo "{\"state\":\"failed\",\"error\":\"Build runner exited with code $rc\"}" > "$BASE/status.json"' ERR
+ANDROID_HOME=$(printenv ANDROID_HOME || true)
+ANDROID_SDK_ROOT=$(printenv ANDROID_SDK_ROOT || true)
+trap 'rc=$?; if [ ! -f "$BASE/status.json" ] || ! grep -q failed "$BASE/status.json"; then echo "{\"state\":\"failed\",\"error\":\"Build runner exited with code $rc\"}" > "$BASE/status.json"; fi' ERR
 mkdir -p "$BASE/work" "$BASE/output"
+: > "$BASE/build.log"
 python3 - <<'PY'
-import zipfile, os
+import zipfile, os, json
 src='/vercel/sandbox/input/project.zip'
 dst='/vercel/sandbox/work'
 try:
  z=zipfile.ZipFile(src)
  total=0
  for i in z.infolist():
-  n=i.filename.replace('\\\\','/')
+  n=i.filename.replace('\\','/')
   parts=n.split('/')
   if n.startswith('/') or (parts and ':' in parts[0]) or '..' in parts:
    raise ValueError('Unsafe ZIP entry: '+n)
@@ -33,60 +36,117 @@ try:
    raise ValueError('Suspicious ZIP compression ratio')
  z.extractall(dst)
 except Exception as e:
- open('/vercel/sandbox/status.json','w').write(__import__('json').dumps({'state':'failed','error':'ZIP validation failed: '+str(e)}))
+ open('/vercel/sandbox/status.json','w').write(json.dumps({'state':'failed','error':'ZIP validation failed: '+str(e)}))
  raise SystemExit(2)
 PY
-if [ $? -ne 0 ]; then exit 2; fi
 ROOT="$BASE/work"
-SETTINGS=$(find "$ROOT" -maxdepth 5 -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)
-if [ -z "$SETTINGS" ]; then
- echo '{"state":"failed","error":"No Gradle settings.gradle or settings.gradle.kts was found in the ZIP."}' > "$BASE/status.json"
- exit 2
+FLUTTER_PUBSPEC=$(find "$ROOT" -maxdepth 7 -type f -name pubspec.yaml -print -quit)
+BUILD_KIND=gradle
+if [ -n "$FLUTTER_PUBSPEC" ]; then
+ ROOT=$(dirname "$FLUTTER_PUBSPEC")
+ BUILD_KIND=flutter
+else
+ SETTINGS=$(find "$ROOT" -maxdepth 7 -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)
+ if [ -z "$SETTINGS" ]; then
+  echo '{"state":"failed","error":"No Gradle settings file or Flutter pubspec.yaml was found in the ZIP."}' > "$BASE/status.json"
+  exit 2
+ fi
+ ROOT=$(dirname "$SETTINGS")
 fi
-ROOT=$(dirname "$SETTINGS")
 SDK=""
-for CANDIDATE in "$HOME/android-sdk" /home/vercel-sandbox/android-sdk /root/android-sdk /opt/android-sdk; do
- if [ -x "$CANDIDATE/platform-tools/adb" ] && [ -d "$CANDIDATE/platforms" ]; then SDK="$CANDIDATE"; break; fi
+for CANDIDATE in "$ANDROID_HOME" "$ANDROID_SDK_ROOT" "$HOME/android-sdk" /home/vercel-sandbox/android-sdk /root/android-sdk /opt/android-sdk; do
+ if [ -n "$CANDIDATE" ] && [ -x "$CANDIDATE/platform-tools/adb" ] && [ -d "$CANDIDATE/platforms" ]; then SDK="$CANDIDATE"; break; fi
 done
 if [ -z "$SDK" ]; then
- SDK=$(find "$HOME" /home/vercel-sandbox /root -maxdepth 5 -type f -name sdkmanager -print -quit 2>/dev/null | sed 's#/cmdline-tools/.*##')
+ SDK=$(find "$HOME" /home/vercel-sandbox /root /opt -maxdepth 6 -type f -name sdkmanager -print -quit 2>/dev/null | sed 's#/cmdline-tools/.*##')
 fi
 if [ -z "$SDK" ]; then echo '{"state":"failed","error":"Android SDK is missing from the build image."}' > "$BASE/status.json"; exit 2; fi
 export ANDROID_HOME="$SDK" ANDROID_SDK_ROOT="$SDK"
 export JAVA_HOME=$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")
 export PATH="$JAVA_HOME/bin:$SDK/platform-tools:$PATH"
-cd "$ROOT"
-GRADLE=""
-if [ -x ./gradlew ]; then GRADLE=./gradlew
-elif [ -x /tmp/gradle-8.7/bin/gradle ]; then GRADLE=/tmp/gradle-8.7/bin/gradle
-else GRADLE=gradle
-fi
-case "$OUTPUT_KIND" in
- apk) TASKS="assembleDebug";;
- aab) TASKS="bundleDebug";;
- both) TASKS="assembleDebug bundleDebug";;
- *) echo '{"state":"failed","error":"Unsupported output format."}' > "$BASE/status.json"; exit 2;;
-esac
 echo '{"state":"building"}' > "$BASE/status.json"
 RC=0
-$GRADLE --no-daemon $TASKS > "$BASE/build.log" 2>&1 || RC=$?
-
+if [ "$BUILD_KIND" = "flutter" ]; then
+ SDKMANAGER="$SDK/cmdline-tools/latest/bin/sdkmanager"
+ if [ ! -x "$SDKMANAGER" ]; then SDKMANAGER=$(find "$SDK/cmdline-tools" -type f -name sdkmanager -print -quit 2>/dev/null || true); fi
+ if [ ! -d "$SDK/platforms/android-36" ] || [ ! -d "$SDK/build-tools/36.0.0" ] || [ ! -d "$SDK/build-tools/28.0.3" ] || [ ! -d "$SDK/ndk/28.2.13676358" ]; then
+  if [ ! -x "$SDKMANAGER" ]; then
+   echo '{"state":"failed","error":"Flutter requires Android SDK 36 and Android SDK Manager is missing from the build image."}' > "$BASE/status.json"
+   exit 2
+  fi
+  "$SDKMANAGER" --install "platforms;android-36" "build-tools;36.0.0" "build-tools;28.0.3" "ndk;28.2.13676358" >> "$BASE/build.log" 2>&1 || {
+   echo '{"state":"failed","error":"Could not install Android SDK 36 / Flutter Android build prerequisites. See build log."}' > "$BASE/status.json"
+   exit 2
+  }
+ fi
+ if [ ! -f "$ROOT/android/settings.gradle" ] && [ ! -f "$ROOT/android/settings.gradle.kts" ]; then
+  echo '{"state":"failed","error":"Flutter project is missing its android Gradle subproject."}' > "$BASE/status.json"
+  exit 2
+ fi
+ FLUTTER=""
+ for CANDIDATE in "$HOME/flutter/bin/flutter" /opt/flutter/bin/flutter /usr/local/flutter/bin/flutter; do
+  if [ -x "$CANDIDATE" ]; then FLUTTER="$CANDIDATE"; break; fi
+ done
+ if [ -z "$FLUTTER" ]; then
+  command -v git >/dev/null 2>&1 || { echo '{"state":"failed","error":"Git is required to install the Flutter SDK."}' > "$BASE/status.json"; exit 2; }
+  git clone --depth 1 --branch stable https://github.com/flutter/flutter.git "$HOME/flutter" >> "$BASE/build.log" 2>&1 || {
+   echo '{"state":"failed","error":"Could not download the Flutter stable SDK. Check sandbox network access and retry."}' > "$BASE/status.json"; exit 2;
+  }
+  FLUTTER="$HOME/flutter/bin/flutter"
+ fi
+ export PATH="$(dirname "$FLUTTER"):$PATH"
+ "$FLUTTER" config --no-analytics >> "$BASE/build.log" 2>&1 || true
+ yes | "$FLUTTER" doctor --android-licenses >> "$BASE/build.log" 2>&1 || true
+ cd "$ROOT"
+ "$FLUTTER" pub get >> "$BASE/build.log" 2>&1 || RC=$?
+ if [ "$RC" -eq 0 ]; then
+  case "$OUTPUT_KIND" in
+   apk) "$FLUTTER" build apk --debug >> "$BASE/build.log" 2>&1 || RC=$? ;;
+   aab) "$FLUTTER" build appbundle --debug >> "$BASE/build.log" 2>&1 || RC=$? ;;
+   both)
+    "$FLUTTER" build apk --debug >> "$BASE/build.log" 2>&1 || RC=$?
+    if [ "$RC" -eq 0 ]; then "$FLUTTER" build appbundle --debug >> "$BASE/build.log" 2>&1 || RC=$?; fi
+    ;;
+   *) echo '{"state":"failed","error":"Unsupported output format."}' > "$BASE/status.json"; exit 2 ;;
+  esac
+ fi
+ if [ "$RC" -eq 0 ]; then
+  [ -f build/app/outputs/flutter-apk/app-debug.apk ] && cp build/app/outputs/flutter-apk/app-debug.apk "$BASE/output/flutter-debug.apk"
+  [ -f build/app/outputs/bundle/debug/app-debug.aab ] && cp build/app/outputs/bundle/debug/app-debug.aab "$BASE/output/flutter-debug.aab"
+ fi
+else
+ cd "$ROOT"
+ GRADLE=""
+ if [ -x ./gradlew ]; then GRADLE=./gradlew
+ elif [ -x /tmp/gradle-8.7/bin/gradle ]; then GRADLE=/tmp/gradle-8.7/bin/gradle
+ else GRADLE=gradle
+ fi
+ case "$OUTPUT_KIND" in
+  apk) TASKS="assembleDebug";;
+  aab) TASKS="bundleDebug";;
+  both) TASKS="assembleDebug bundleDebug";;
+  *) echo '{"state":"failed","error":"Unsupported output format."}' > "$BASE/status.json"; exit 2;;
+ esac
+ $GRADLE --no-daemon $TASKS > "$BASE/build.log" 2>&1 || RC=$?
+ if [ "$RC" -eq 0 ]; then
+  find "$ROOT" -path '*/build/outputs/apk/debug/*.apk' -type f -exec cp {} "$BASE/output/" \;
+  find "$ROOT" -path '*/build/outputs/bundle/debug/*.aab' -type f -exec cp {} "$BASE/output/" \;
+ fi
+fi
 if [ "$RC" -ne 0 ]; then
  python3 - <<'PY'
 p='/vercel/sandbox/build.log'
 s=open(p,errors='replace').read()
 open('/vercel/sandbox/status.json','w').write(__import__('json').dumps({'state':'failed','error':s[-12000:]}))
 PY
- exit $RC
+ exit "$RC"
 fi
-find "$ROOT" -path '*/build/outputs/apk/debug/*.apk' -type f -exec cp {} "$BASE/output/" \;
-find "$ROOT" -path '*/build/outputs/bundle/debug/*.aab' -type f -exec cp {} "$BASE/output/" \;
 python3 - <<'PY'
-import json,glob,os
+import json,glob
 a=glob.glob('/vercel/sandbox/output/*.apk')
 b=glob.glob('/vercel/sandbox/output/*.aab')
 if not a and not b:
- open('/vercel/sandbox/status.json','w').write(json.dumps({'state':'failed','error':'Gradle completed but no debug APK or AAB artifact was found.'}))
+ open('/vercel/sandbox/status.json','w').write(json.dumps({'state':'failed','error':'Build completed but no debug APK or AAB artifact was found.'}))
 else:
  open('/vercel/sandbox/status.json','w').write(json.dumps({'state':'complete','apk':a[0] if a else None,'aab':b[0] if b else None}))
 PY
@@ -105,8 +165,9 @@ export async function startBuild(zip, output = "apk") {
     source: { type: "snapshot", snapshotId },
     runtime: "node24",
     region: "iad1",
+    resources: { vcpus: 4, memory: 8192 },
     timeout: 45 * 60 * 1000,
-    persistent: true,
+    persistent: false,
     networkPolicy: "allow-all"
   });
   try {
