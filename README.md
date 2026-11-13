@@ -37,7 +37,7 @@ A Vercel-hosted Android Gradle build service. Users upload a ZIP containing a Ja
 ## Required Vercel configuration
 
 - BLOB_READ_WRITE_TOKEN: connected private Blob store.
-- ANDROID_BUILD_SNAPSHOT_ID: snapshot containing Java 17, Android SDK platform/build tools, and Gradle 8.7.
+- ANDROID_BUILD_SNAPSHOT_ID: snapshot containing Java 17, Android SDK platforms 33–35, matching build tools, and Gradle 8.7.
 - Vercel Sandbox OIDC access for the project.
 - Node.js 22 runtime.
 
