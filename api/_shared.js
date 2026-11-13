@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { put } from "@vercel/blob";
+import { put, get, del } from "@vercel/blob";
 import { Sandbox } from "@vercel/sandbox";
 
 export function json(res, status, data) {
@@ -123,6 +123,31 @@ export async function startBuild(zip, output = "apk") {
     try { await sandbox.stop(); } catch {}
     throw error;
   }
+}
+
+
+export async function startBuildFromBlob(pathname, output = "apk") {
+  if (typeof pathname !== "string" || !/^uploads\/[a-f0-9]{32}\.zip$/.test(pathname)) throw new Error("Invalid uploaded project reference.");
+  const blob = await get(pathname, { access: "private" });
+  if (!blob || blob.statusCode !== 200 || !blob.stream) throw new Error("Uploaded project ZIP was not found.");
+  const chunks = [];
+  let size = 0;
+  const reader = blob.stream.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 50 * 1024 * 1024) throw new Error("Project ZIP exceeds 50 MB.");
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const zip = Buffer.concat(chunks, size);
+  const job = await startBuild(zip, output);
+  try { await del(pathname, { access: "private" }); } catch {}
+  return job;
 }
 
 export async function getBuild(id) {
