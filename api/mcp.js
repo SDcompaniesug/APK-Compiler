@@ -1,7 +1,7 @@
-import { json, startBuild, getBuild } from "./_shared.js";
+import { json, startBuild, startBuildFromBlob, getBuild } from "./_shared.js";
 export const config={api:{bodyParser:true}};
 const tools=[
- {name:"start_android_build",description:"Start an isolated Android Gradle build from a base64-encoded project ZIP. Supports Java, Kotlin and mixed projects; debug APK, AAB or both. ZIP maximum 50 MB.",inputSchema:{type:"object",properties:{project_zip_base64:{type:"string",description:"Base64-encoded .zip file"},output:{type:"string",enum:["apk","aab","both"],default:"apk"}},required:["project_zip_base64"]}},
+ {name:"start_android_build",description:"Start an isolated Android Gradle build from a base64-encoded project ZIP or a previously uploaded private Blob pathname. Supports Java, Kotlin and mixed projects; debug APK, AAB or both. ZIP maximum 50 MB.",inputSchema:{type:"object",properties:{project_zip_base64:{type:"string",description:"Base64-encoded .zip file"},project_blob_path:{type:"string",description:"Private Blob pathname returned by the direct upload flow"},output:{type:"string",enum:["apk","aab","both"],default:"apk"}},anyOf:[{required:["project_zip_base64"]},{required:["project_blob_path"]}]}},
  {name:"get_android_build_status",description:"Check an Android build job and receive download URLs when complete.",inputSchema:{type:"object",properties:{job_id:{type:"string"}},required:["job_id"]}},
  {name:"apk_compiler_info",description:"Get service capabilities and build constraints.",inputSchema:{type:"object",properties:{}}}
 ];
