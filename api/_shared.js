@@ -115,7 +115,8 @@ export async function startBuild(zip, output = "apk") {
     ]);
     await sandbox.runCommand({ cmd: "bash", args: ["/vercel/sandbox/run-build.sh"], detached: true, env: { OUTPUT_KIND: output }, timeoutMs: 45 * 60 * 1000 });
     await put("jobs/" + id + ".json", JSON.stringify({ id, name, output, createdAt: new Date().toISOString() }), {
-      access: "public", contentType: "application/json", addRandomSuffix: false
+      access: "public", contentType: "application/json", addRandomSuffix: false,
+      allowOverwrite: true
     });
     return { jobId: id, state: "queued", statusUrl: "/api/status?id=" + id };
   } catch (error) {
@@ -126,7 +127,7 @@ export async function startBuild(zip, output = "apk") {
 
 export async function getBuild(id) {
   if (!/^[a-f0-9]{32}$/.test(id || "")) throw new Error("Invalid job ID.");
-  const sandbox = await Sandbox.get({ name: "apk-build-" + id });
+  const sandbox = await Sandbox.get({ name: "apk-build-" + id, resume: true });
   const raw = await sandbox.readFileToBuffer({ path: "/vercel/sandbox/status.json" });
   if (!raw) return { jobId: id, state: "queued" };
   const state = JSON.parse(raw.toString("utf8"));
