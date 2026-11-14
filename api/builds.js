@@ -1,8 +1,16 @@
 import { neon } from "@neondatabase/serverless";
-import { getBuild, json } from "./_shared.js";
+import { getBuild, deleteBuild, json } from "./_shared.js";
 
 export default async function handler(req,res) {
-  if (req.method !== "GET") return json(res,405,{error:"Use GET."});
+  if (req.method === "DELETE") {
+    try {
+      const result = await deleteBuild(req.query?.id);
+      return json(res,200,result);
+    } catch (error) {
+      return json(res,error.statusCode || 500,{error:error?.message || "Could not delete build."});
+    }
+  }
+  if (req.method !== "GET") return json(res,405,{error:"Use GET or DELETE."});
   try {
     if (!process.env.DATABASE_URL) throw new Error("Neon database is not configured.");
     const sql = neon(process.env.DATABASE_URL);
