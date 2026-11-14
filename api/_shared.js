@@ -264,7 +264,7 @@ else:
      for icon in icons:
       try:
        data=apk.read(icon)
-       if len(data)<=180000 and (data.startswith(b'\x89PNG') or data.startswith(b'RIFF') or data.startswith(b'\xff\xd8')):
+       if len(data)<=60000 and (data.startswith(b'\x89PNG') or data.startswith(b'RIFF') or data.startswith(b'\xff\xd8')):
         meta['appIconBase64']=base64.b64encode(data).decode('ascii')
         break
       except Exception: pass
@@ -415,7 +415,19 @@ export async function getBuild(id) {
       artifacts[key] = {size:file.length,url:"/api/download?id="+id+"&file="+key};
     }
     if (state.appName) artifacts.appName = String(state.appName).slice(0,120);
-    if (state.appIconBase64) artifacts.appIconBase64 = String(state.appIconBase64).slice(0,240000);
+    if (state.appIconBase64) {
+      const icon = Buffer.from(String(state.appIconBase64), "base64");
+      if (icon.length > 0 && icon.length <= 60000) {
+        const contentType = icon.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))
+          ? "image/png"
+          : icon.subarray(0,4).toString("ascii") === "RIFF" ? "image/webp" : "image/jpeg";
+        await client.send(new PutObjectCommand({
+          Bucket:process.env.AWS_BUCKET,Key:"builds/"+id+"/icon.img",Body:icon,
+          ContentType:contentType,CacheControl:"private, max-age=86400"
+        }));
+        artifacts.appIcon = {url:"/api/icon?id="+id,contentType};
+      }
+    }
     if (!Object.keys(artifacts).length) {
       const error = "Build completed but no APK or AAB artifact could be read.";
       await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2",[error,id]);
@@ -475,8 +487,30 @@ export async function deleteBuild(id) {
     } catch {}
   }
   const client = storage();
-  const keys = [job.upload_key, "builds/" + id + "/apk.apk", "builds/" + id + "/aab.aab"].filter(Boolean);
+  const keys = [job.upload_key, "builds/" + id + "/apk.apk", "builds/" + id + "/aab.aab", "builds/" + id + "/icon.img"].filter(Boolean);
   await Promise.all(keys.map(key => client.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET, Key: key }))));
   await sql.query("DELETE FROM build_jobs WHERE id=$1", [id]);
   return { success: true, deleted: id };
+}
+
+
+export async function getAppIcon(id,res) {
+  if (!/^[a-f0-9]{32}$/.test(id || "")) {
+    const error = new Error("Invalid build ID."); error.statusCode = 400; throw error;
+  }
+  const sql = database();
+  const rows = await sql.query("SELECT state,artifacts FROM build_jobs WHERE id=$1 LIMIT 1",[id]);
+  if (!rows.length || rows[0].state !== "complete" || !rows[0].artifacts?.appIcon) {
+    const error = new Error("App icon not found."); error.statusCode = 404; throw error;
+  }
+  const client = storage();
+  const result = await client.send(new GetObjectCommand({Bucket:process.env.AWS_BUCKET,Key:"builds/"+id+"/icon.img"}));
+  res.statusCode = 200;
+  res.setHeader("content-type",rows[0].artifacts.appIcon.contentType || "image/png");
+  res.setHeader("cache-control","private, max-age=86400");
+  res.setHeader("x-content-type-options","nosniff");
+  for await (const chunk of result.Body) {
+    if (!res.write(Buffer.from(chunk))) await new Promise(resolve=>res.once("drain",resolve));
+  }
+  res.end();
 }
