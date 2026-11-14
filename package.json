@@ -5,7 +5,9 @@
   "type": "module",
   "dependencies": {
     "@vercel/sandbox": "^4.0.0",
-    "@vercel/blob": "^2.9.0",
+    "@neondatabase/serverless": "^1.0.2",
+    "@aws-sdk/client-s3": "^3.850.0",
+    "@aws-sdk/s3-request-presigner": "^3.850.0",
     "busboy": "^1.6.0"
   }
 }
