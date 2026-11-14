@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
-import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, DeleteObjectCommand, PutBucketCorsCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { Sandbox } from "@vercel/sandbox";
 
@@ -279,10 +279,28 @@ async function streamToBuffer(body, maxBytes = 50 * 1024 * 1024) {
   }
   return Buffer.concat(chunks, size);
 }
+async function ensureBucketCors(client) {
+  await client.send(new PutBucketCorsCommand({
+    Bucket: process.env.AWS_BUCKET,
+    CORSConfiguration: {
+      CORSRules: [{
+        AllowedOrigins: [
+          "https://apk-compiler-sdcompaniesugs-projects.vercel.app",
+          "https://apk-compiler-ten.vercel.app"
+        ],
+        AllowedMethods: ["PUT","HEAD"],
+        AllowedHeaders: ["*"],
+        ExposeHeaders: ["ETag"],
+        MaxAgeSeconds: 3600
+      }]
+    }
+  }));
+}
 export async function createUpload(id, filename) {
   if (!/\.zip$/i.test(String(filename || ""))) throw new Error("Choose a .zip project file.");
   const key = "uploads/" + id + ".zip";
   const client = storage();
+  await ensureBucketCors(client);
   const uploadUrl = await getSignedUrl(client, new PutObjectCommand({
     Bucket: process.env.AWS_BUCKET, Key: key, ContentType: "application/zip"
   }), { expiresIn: 900 });
