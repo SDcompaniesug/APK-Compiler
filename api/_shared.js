@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { Sandbox } from "@vercel/sandbox";
 
@@ -329,6 +329,8 @@ export async function startBuildFromBlob(pathname, output = "apk") {
   const rows = await sql.query("SELECT id,state,upload_key FROM build_jobs WHERE id=$1 LIMIT 1",[id]);
   if (!rows.length || rows[0].upload_key !== pathname) throw new Error("Uploaded project was not found or has expired.");
   const client = storage();
+  const head = await client.send(new HeadObjectCommand({Bucket:process.env.AWS_BUCKET,Key:pathname}));
+  if (!Number.isFinite(head.ContentLength) || head.ContentLength < 22 || head.ContentLength > 50*1024*1024) throw new Error("Uploaded project ZIP must be between 22 bytes and 50 MB.");
   const response = await client.send(new GetObjectCommand({Bucket:process.env.AWS_BUCKET,Key:pathname}));
   const zip = await streamToBuffer(response.Body);
   const job = await startBuild(zip,output,id);
