@@ -406,7 +406,7 @@ export async function getBuild(id) {
     throw error;
   }
 }
-export async function downloadArtifact(id,file,res) {
+export async function downloadArtifact(id,file,res,rangeHeader = null) {
   if (!/^[a-f0-9]{32}$/.test(id||"") || !["apk","aab"].includes(file)) throw new Error("Invalid artifact request.");
   const sql = database();
   const rows = await sql.query("SELECT state,artifacts FROM build_jobs WHERE id=$1 LIMIT 1",[id]);
@@ -415,12 +415,16 @@ export async function downloadArtifact(id,file,res) {
   }
   const key = "builds/"+id+"/"+file+(file==="apk"?".apk":".aab");
   const client = storage();
-  const result = await client.send(new GetObjectCommand({Bucket:process.env.AWS_BUCKET,Key:key}));
-  res.statusCode=200;
+  const range = typeof rangeHeader === "string" && /^bytes=\d+-\d*$/.test(rangeHeader) ? rangeHeader : undefined;
+  const result = await client.send(new GetObjectCommand({Bucket:process.env.AWS_BUCKET,Key:key,...(range ? {Range:range} : {})}));
+  res.statusCode = range ? 206 : 200;
   res.setHeader("content-type",file==="apk"?"application/vnd.android.package-archive":"application/octet-stream");
   res.setHeader("content-disposition",'attachment; filename="android-'+file+(file==="apk"?".apk":".aab")+'"');
   res.setHeader("cache-control","private, no-store");
   res.setHeader("x-content-type-options","nosniff");
+  res.setHeader("accept-ranges","bytes");
+  if (result.ContentLength != null) res.setHeader("content-length",String(result.ContentLength));
+  if (result.ContentRange) res.setHeader("content-range",result.ContentRange);
   for await (const chunk of result.Body) {
     if (!res.write(Buffer.from(chunk))) await new Promise(resolve=>res.once("drain",resolve));
   }
