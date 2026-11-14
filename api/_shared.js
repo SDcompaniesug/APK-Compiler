@@ -107,12 +107,18 @@ if [ "$BUILD_KIND" = "flutter" ]; then
     "$FLUTTER" build apk --debug >> "$BASE/build.log" 2>&1 || RC=$?
     if [ "$RC" -eq 0 ]; then "$FLUTTER" build appbundle --debug >> "$BASE/build.log" 2>&1 || RC=$?; fi
     ;;
+   release-apk) "$FLUTTER" build apk --release >> "$BASE/build.log" 2>&1 || RC=$? ;;
+   release-aab) "$FLUTTER" build appbundle --release >> "$BASE/build.log" 2>&1 || RC=$? ;;
+   release-both)
+    "$FLUTTER" build apk --release >> "$BASE/build.log" 2>&1 || RC=$?
+    if [ "$RC" -eq 0 ]; then "$FLUTTER" build appbundle --release >> "$BASE/build.log" 2>&1 || RC=$?; fi
+    ;;
    *) echo '{"state":"failed","error":"Unsupported output format."}' > "$BASE/status.json"; exit 2 ;;
   esac
  fi
  if [ "$RC" -eq 0 ]; then
-  [ -f build/app/outputs/flutter-apk/app-debug.apk ] && cp build/app/outputs/flutter-apk/app-debug.apk "$BASE/output/flutter-debug.apk"
-  [ -f build/app/outputs/bundle/debug/app-debug.aab ] && cp build/app/outputs/bundle/debug/app-debug.aab "$BASE/output/flutter-debug.aab"
+  find build/app/outputs/flutter-apk -maxdepth 1 -type f -name '*.apk' -exec cp {} "$BASE/output/" \; 2>/dev/null || true
+  find build/app/outputs/bundle -maxdepth 2 -type f -name '*.aab' -exec cp {} "$BASE/output/" \; 2>/dev/null || true
  fi
 else
  cd "$ROOT"
@@ -165,6 +171,9 @@ PY
   apk) TASKS=(assembleDebug);;
   aab) TASKS=(bundleDebug);;
   both) TASKS=(assembleDebug bundleDebug);;
+  release-apk) TASKS=(assembleRelease);;
+  release-aab) TASKS=(bundleRelease);;
+  release-both) TASKS=(assembleRelease bundleRelease);;
   *) echo '{"state":"failed","error":"Unsupported output format."}' > "$BASE/status.json"; exit 2 ;;
  esac
  # First build attempt uses the project's configured wrapper (or fallback Gradle).
@@ -219,8 +228,8 @@ PY
  fi
 
  if [ "$RC" -eq 0 ]; then
-  find "$ROOT" -path '*/build/outputs/apk/debug/*.apk' -type f -exec cp {} "$BASE/output/" \;
-  find "$ROOT" -path '*/build/outputs/bundle/debug/*.aab' -type f -exec cp {} "$BASE/output/" \;
+  find "$ROOT" -path '*/build/outputs/apk/*/*.apk' -type f -exec cp {} "$BASE/output/" \;
+  find "$ROOT" -path '*/build/outputs/bundle/*/*.aab' -type f -exec cp {} "$BASE/output/" \;
  fi
 fi
 if [ "$RC" -ne 0 ]; then
@@ -236,7 +245,7 @@ import json,glob
 a=glob.glob('/vercel/sandbox/output/*.apk')
 b=glob.glob('/vercel/sandbox/output/*.aab')
 if not a and not b:
- open('/vercel/sandbox/status.json','w').write(json.dumps({'state':'failed','error':'Build completed but no debug APK or AAB artifact was found.'}))
+ open('/vercel/sandbox/status.json','w').write(json.dumps({'state':'failed','error':'Build completed but no requested APK or AAB artifact was found.'}))
 else:
  open('/vercel/sandbox/status.json','w').write(json.dumps({'state':'complete','apk':a[0] if a else None,'aab':b[0] if b else None}))
 PY
@@ -246,7 +255,7 @@ export async function startBuild(zip, output = "apk") {
   if (!process.env.BLOB_READ_WRITE_TOKEN) throw new Error("Vercel Blob is not configured.");
   const snapshotId = process.env.ANDROID_BUILD_SNAPSHOT_ID;
   if (!snapshotId) throw new Error("Android build snapshot is not configured.");
-  if (!["apk", "aab", "both"].includes(output)) throw new Error("Output must be apk, aab, or both.");
+  if (!["apk", "aab", "both", "release-apk", "release-aab", "release-both"].includes(output)) throw new Error("Choose a supported debug or release output.");
   if (!Buffer.isBuffer(zip) || zip.length < 22 || zip.length > 50 * 1024 * 1024) throw new Error("Project ZIP must be between 22 bytes and 50 MB.");
   const id = newId();
   const name = "apk-build-" + id;
