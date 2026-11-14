@@ -1,39 +1,115 @@
-<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>APK Compiler</title><style>body{font:16px system-ui;background:#f5f7fb;color:#172337;margin:0}.wrap{max-width:650px;margin:8vh auto;padding:24px}.card{background:white;border:1px solid #e4eaf3;border-radius:18px;padding:26px;box-shadow:0 12px 40px #1723370d}h1{margin:0 0 8px}p{color:#66758b}input,select,button{font:inherit;padding:12px;border:1px solid #d8e0eb;border-radius:10px;width:100%;box-sizing:border-box;margin:8px 0}button{background:#3978f6;color:white;border:0;font-weight:650;cursor:pointer}a{color:#2867d9;display:block;margin:10px 0;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#b42318}</style><div class="wrap"><div class="card"><h1>APK Compiler</h1><p>Build a debug APK or Android App Bundle from a Java, Kotlin, Jetpack Compose, or Flutter project ZIP.</p><form id="f"><input name="project" type="file" accept=".zip,application/zip" required><select name="output"><optgroup label="Debug builds"><option value="apk">Debug APK</option><option value="aab">Debug AAB</option><option value="both">Both Debug APK + AAB</option></optgroup><optgroup label="Release builds"><option value="release-apk">Release APK</option><option value="release-aab">Release AAB</option><option value="release-both">Both Release APK + AAB</option></optgroup></select><p>Release signing: configure a release signing key in your Android project before uploading. Builds without a release signing configuration may produce unsigned release artifacts.</p><button>Start build</button></form><p id="status">Choose a project ZIP to begin.</p><div id="links"></div><pre id="err"></pre></div></div><script>
-const f=document.querySelector('#f'),s=document.querySelector('#status'),l=document.querySelector('#links'),e=document.querySelector('#err');
-function putFile(url,file){
- return new Promise((resolve,reject)=>{
-  const x=new XMLHttpRequest();x.open('PUT',url);x.setRequestHeader('Content-Type','application/zip');
-  x.upload.onprogress=v=>{if(v.lengthComputable)s.textContent='Uploading project: '+Math.round(v.loaded/v.total*100)+'%';};
-  x.onload=()=>x.status>=200&&x.status<300?resolve():reject(new Error('Object Storage upload failed ('+x.status+'): '+x.responseText));
-  x.onerror=()=>reject(new Error('Network error while uploading ZIP.'));
-  x.send(file);
- });
-}
-f.onsubmit=async ev=>{
- ev.preventDefault();l.innerHTML='';e.textContent='';
- const file=f.elements.project.files[0];if(!file)return;
- if(!file.name.toLowerCase().endsWith('.zip')){e.textContent='Choose a .zip file.';return;}
- if(file.size>50*1024*1024){e.textContent='Maximum ZIP size is 50 MB.';return;}
- try{
-  s.textContent='Preparing secure upload…';
-  const signed=await fetch('/api/upload-url',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({filename:file.name})});
-  const sign=await signed.json();if(!signed.ok)throw new Error(sign.error||'Could not prepare upload.');
-  await putFile(sign.uploadUrl,file);
-  s.textContent='Starting Android build…';
-  const started=await fetch('/api/build',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({pathname:sign.pathname,output:f.elements.output.value})});
-  const job=await started.json();if(!started.ok)throw new Error(job.error||'Could not start build.');
-  s.textContent='Build queued: '+job.jobId;
-  const poll=async()=>{
-   const q=await fetch('/api/status?id='+encodeURIComponent(job.jobId));const v=await q.json();
-   s.textContent='Build status: '+v.state;
-   if(v.state==='complete'){
-    l.innerHTML=Object.entries(v.artifacts||{}).map(([k,a])=>'<a href="'+a.url+'" download>Download '+k.toUpperCase()+' ('+a.size+' bytes)</a>').join('');
-    return;
-   }
-   if(v.state==='failed'){e.textContent=v.error||'Build failed';return;}
-   setTimeout(poll,4000);
-  };
-  poll();
- }catch(x){s.textContent='Build could not start';e.textContent=x.message;}
-};
-</script></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#06130e"><title>APK Compiler</title>
+<style>
+:root{color-scheme:dark;--bg:#07120e;--surface:#0d2118;--surface2:#10291d;--green:#08d875;--green2:#00a94f;--muted:#a2b9aa;--line:rgba(116,205,151,.13);--glass:rgba(13,45,29,.76)}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 50% -10%,#123e25 0,transparent 42%),var(--bg);color:#f3fff6;font:15px Inter,system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh;padding-bottom:100px}
+button,input,select{font:inherit}button{cursor:pointer}.app{max-width:760px;margin:auto;padding:18px 18px 30px}.hero{border:1px solid rgba(42,230,128,.17);border-radius:30px;padding:25px 22px;background:linear-gradient(112deg,#079c4b 0%,#08763c 48%,#062619 100%);box-shadow:0 14px 44px #00a94f16;display:flex;align-items:center;gap:15px;position:relative;overflow:hidden}.hero:after{content:"";position:absolute;width:190px;height:190px;border-radius:50%;background:#20ff8a12;right:-55px;top:-80px}.brand-icon{width:58px;height:58px;border-radius:18px;background:linear-gradient(145deg,#0b321d,#087d43);border:1px solid #20e98766;display:grid;place-items:center;color:#21f28d;flex:none}.brand-icon svg{width:34px;height:34px}.hero-copy{flex:1;min-width:0}.eyebrow{color:#d1f7df;font-size:13px}.hero h1{font-family:Georgia,serif;font-size:clamp(25px,5vw,32px);margin:3px 0 5px;letter-spacing:-.5px}.hero p{margin:0;color:#d1f5dd;font-size:14px}.icon-btn{border:1px solid #ffffff25;background:#ffffff12;color:#f1fff5;border-radius:50%;width:46px;height:46px;display:grid;place-items:center;flex:none}.icon-btn svg{width:21px;height:21px}
+h2{font: bold 22px Georgia,serif;margin:27px 0 14px}.section-head{display:flex;align-items:center;justify-content:space-between}.link-btn{border:0;background:none;color:#16e982;font-weight:700;padding:8px}
+.panel{background:linear-gradient(145deg,rgba(16,42,29,.95),rgba(9,28,19,.95));border:1px solid var(--line);border-radius:25px;box-shadow:inset 0 1px #ffffff08,0 12px 28px #0002}.build-panel{padding:20px;display:grid;grid-template-columns:1fr 132px;gap:8px;align-items:center;overflow:hidden}.build-panel h3{font: bold 24px/1.2 Georgia,serif;margin:0 0 10px}.build-panel p{color:#c0d3c5;line-height:1.5;margin:0 0 15px}.android-art{font-size:94px;text-align:center;filter:drop-shadow(0 12px 16px #00e87830)}.primary{border:0;border-radius:17px;background:linear-gradient(105deg,#0ad66e,#009d4b);color:white;font-weight:800;padding:15px 18px;box-shadow:0 8px 24px #00c86a30;display:flex;align-items:center;justify-content:center;gap:10px;width:100%}.primary:disabled{opacity:.55;cursor:wait}.primary svg{width:21px;height:21px}.formats{font-size:12px;color:#a9c4b1;margin:12px 2px 0}
+.form-area{margin-top:16px;padding:16px}.file-drop{display:flex;gap:12px;align-items:center;border:1px dashed #3d8058;border-radius:17px;padding:14px;background:#071b11}.file-drop input{max-width:100%;font-size:13px;color:#c8dfcf}.field-label{font-size:12px;color:#b9cfbf;display:block;margin:14px 0 6px}.select{width:100%;background:#10271b;border:1px solid #28533a;border-radius:13px;padding:13px;color:#effff3}.hint{font-size:12px;color:#91aa99;line-height:1.5;margin:12px 2px 0}.status{font-size:13px;color:#bde9cd;margin:12px 2px 0;overflow-wrap:anywhere}.error{color:#ff9c9c;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;margin-top:8px}
+.carousel{display:flex;gap:13px;overflow-x:auto;padding:2px 2px 13px;scroll-snap-type:x mandatory;scrollbar-width:none}.carousel::-webkit-scrollbar{display:none}.recent-card{width:155px;min-width:155px;scroll-snap-align:start;padding:13px;border-radius:23px;background:linear-gradient(145deg,#103522,#0a2016);border:1px solid #1b5837;position:relative}.app-tile{height:58px;width:58px;border-radius:17px;display:grid;place-items:center;color:white;font-size:25px;font-weight:800;box-shadow:inset 0 1px #ffffff38}.download-small{position:absolute;right:12px;top:12px;width:37px;height:37px;border-radius:50%;background:#16432d;border:1px solid #4a8965;color:#eafff0;display:grid;place-items:center}.download-small svg{width:18px}.recent-card h3{font: bold 16px Georgia,serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:13px 0 5px}.recent-card p{font-size:12px;color:#b8cdbd;margin:0 0 9px}.state{font-size:12px;color:#15e982;display:flex;align-items:center;gap:5px}.state.failed{color:#ff8c8c}.state.building{color:#ffd77b}
+.quick-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.quick{border:1px solid var(--line);background:linear-gradient(145deg,#102b1d,#0a2016);border-radius:22px;padding:15px 8px;color:#eaffef;display:flex;flex-direction:column;align-items:center;gap:9px;font-weight:650}.quick-ico{width:48px;height:48px;border-radius:15px;background:#0b3923;color:#13d77a;display:grid;place-items:center}.quick svg{width:22px;height:22px}
+.page{display:none}.page.active{display:block}.page-title{font: bold 29px Georgia,serif;margin:8px 0 4px}.sub{color:#a9c1b0;margin:0 0 20px;font-size:14px}
+.build-list{display:flex;flex-direction:column;gap:12px}.build-row{display:flex;align-items:center;gap:13px;padding:15px;border-radius:22px;background:linear-gradient(145deg,#102c1e,#0b2117);border:1px solid var(--line)}.build-row .app-tile{width:55px;height:55px;flex:none}.build-info{min-width:0;flex:1}.build-info h3{font: bold 17px Georgia,serif;margin:0 0 5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.build-info p{font-size:12px;color:#adc4b5;margin:0 0 6px}.download-action{width:43px;height:43px;border-radius:50%;border:1px solid #397b56;background:#16452d;color:#eaffef;display:grid;place-items:center;flex:none}.download-action:disabled{opacity:.25}.download-action svg{width:20px;height:20px}.empty{padding:34px 20px;text-align:center;color:#a9c1b0}.empty svg{width:42px;height:42px;color:#16ce74;margin-bottom:10px}
+.settings-group{margin:22px 0}.settings-group h3{font: bold 19px Georgia,serif;margin:0 0 10px}.settings-card{overflow:hidden;border-radius:22px;background:linear-gradient(145deg,#10291c,#0a2016);border:1px solid var(--line)}.setting{display:flex;align-items:center;gap:13px;padding:14px 15px;border-bottom:1px solid #ffffff08;min-height:72px}.setting:last-child{border:0}.setting-icon{width:43px;height:43px;border-radius:14px;background:#0c3923;color:#16d77a;display:grid;place-items:center;flex:none}.setting-icon svg{width:20px;height:20px}.setting-copy{flex:1;min-width:0}.setting-copy strong{display:block;font: bold 15px Georgia,serif}.setting-copy small{display:block;color:#a8c0ae;font-size:12px;margin-top:4px}.chevron{color:#a5bdac}.setting select{max-width:125px;background:#10291c;color:#dfffea;border:1px solid #2a5c3c;border-radius:10px;padding:8px;font-size:12px}.switch{appearance:none;width:43px;height:25px;border-radius:30px;background:#345342;position:relative;flex:none;cursor:pointer}.switch:checked{background:#05bf65}.switch:after{content:"";position:absolute;width:19px;height:19px;border-radius:50%;background:white;top:3px;left:3px;transition:.2s}.switch:checked:after{left:21px}.credits{padding:18px;display:flex;align-items:center;gap:14px}.credits .brand-icon{width:54px;height:54px}.credits strong{font: bold 18px Georgia,serif}.credits small{display:block;color:#a9c1b0;margin-top:5px;line-height:1.5}
+.bottom-nav{position:fixed;z-index:10;bottom:max(10px,env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);width:min(720px,calc(100% - 22px));padding:9px 12px;background:rgba(8,29,18,.94);backdrop-filter:blur(20px);border:1px solid #24543a;border-radius:27px;display:grid;grid-template-columns:repeat(3,1fr);box-shadow:0 12px 45px #0009}.nav-btn{border:0;background:transparent;color:#c1d1c6;border-radius:19px;padding:9px 4px 7px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:5px;font-size:12px}.nav-btn svg{width:23px;height:23px}.nav-btn.active{background:linear-gradient(145deg,#073b22,#0a2d1b);color:#16ed88;font-weight:750}.toast{position:fixed;bottom:100px;left:50%;transform:translateX(-50%);background:#153c27;border:1px solid #397a53;color:#effff3;border-radius:14px;padding:11px 16px;font-size:13px;z-index:20;display:none;max-width:90%;text-align:center}
+@media(min-width:680px){.app{padding-top:28px}.build-panel{grid-template-columns:1fr 180px}.android-art{font-size:125px}}
+</style>
+</head>
+<body>
+<main class="app">
+<header class="hero">
+ <div class="brand-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7.1 3.1 5.8 1.2l-.9.6 1.4 2A7.5 7.5 0 0 0 3.2 10h17.6a7.5 7.5 0 0 0-3.1-6.2l1.4-2-.9-.6-1.3 1.9A9.1 9.1 0 0 0 12 2.2c-1.8 0-3.4.3-4.9.9ZM8 7.2a.8.8 0 1 1 0-1.6.8.8 0 0 1 0 1.6Zm8 0a.8.8 0 1 1 0-1.6.8.8 0 0 1 0 1.6ZM3 11h18v8.2a1.8 1.8 0 0 1-1.8 1.8H17v2h-2v-2H9v2H7v-2H4.8A1.8 1.8 0 0 1 3 19.2V11Z"/></svg></div>
+ <div class="hero-copy"><div class="eyebrow" id="heroEyebrow">Welcome to</div><h1>APK Compiler</h1><p>Build · Compile · Download</p></div>
+ <button class="icon-btn" id="notifyBtn" aria-label="Notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></button>
+</header>
+
+<section class="page active" id="homePage">
+ <h2>Build Your Android Project</h2>
+ <div class="panel build-panel"><div><h3>Compile your next app</h3><p>Upload a project ZIP and create an APK or Android App Bundle.</p><button class="primary" id="chooseBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 16V4m-5 5 5-5 5 5M4 16v4h16v-4"/></svg>Select Project ZIP</button></div><div class="android-art">🤖</div><div class="formats">Debug APK · Debug AAB · Release APK · Release AAB</div></div>
+ <form id="buildForm" class="panel form-area">
+  <div class="file-drop"><div class="setting-icon">ZIP</div><div style="flex:1;min-width:0"><strong style="font-size:13px">Project archive</strong><input id="projectFile" type="file" accept=".zip,application/zip" required></div></div>
+  <label class="field-label" for="outputKind">Build output</label>
+  <select class="select" id="outputKind"><optgroup label="Debug builds"><option value="apk">Debug APK</option><option value="aab">Debug AAB</option><option value="both">Both Debug APK + AAB</option></optgroup><optgroup label="Release builds"><option value="release-apk">Release APK</option><option value="release-aab">Release AAB</option><option value="release-both">Both Release APK + AAB</option></optgroup></select>
+  <p class="hint">Release builds require a signing configuration in your Android project. Upload limit: 50 MB.</p>
+  <button class="primary" id="startBtn" type="submit">Start Build</button><div class="status" id="buildStatus" aria-live="polite">Choose a project ZIP to begin.</div><div class="error" id="buildError"></div>
+ </form>
+ <div class="section-head"><h2>Recent Builds</h2><button class="link-btn" data-goto="builds">View All →</button></div>
+ <div class="carousel" id="recentBuilds"><div class="empty">Your completed builds will appear here.</div></div>
+ <h2>Quick Actions</h2><div class="quick-grid">
+ <button class="quick" id="refreshBtn"><span class="quick-ico">↻</span>Refresh Builds</button>
+ <button class="quick" data-goto="builds"><span class="quick-ico">▤</span>My Builds</button>
+ <button class="quick" data-goto="settings"><span class="quick-ico">⚙</span>Settings</button>
+ </div>
+</section>
+
+<section class="page" id="buildsPage"><h2 class="page-title">My Builds</h2><p class="sub">Your compiled Android applications</p><div class="build-list" id="buildList"><div class="empty">Loading your builds…</div></div></section>
+
+<section class="page" id="settingsPage"><h2 class="page-title">Settings</h2><p class="sub">Manage your APK Compiler experience</p>
+ <div class="settings-group"><h3>Build Preferences</h3><div class="settings-card">
+ <div class="setting"><span class="setting-icon">⇩</span><div class="setting-copy"><strong>Default Output</strong><small>Preferred build artifact</small></div><select id="defaultOutput"><option value="apk">APK</option><option value="aab">AAB</option><option value="both">APK + AAB</option></select></div>
+ <div class="setting"><span class="setting-icon">⚒</span><div class="setting-copy"><strong>Default Build Type</strong><small>Debug or release build</small></div><select id="defaultType"><option value="debug">Debug</option><option value="release">Release</option></select></div>
+ <div class="setting"><span class="setting-icon">✦</span><div class="setting-copy"><strong>Remember Build Selection</strong><small>Use your last selected output</small></div><input class="switch" type="checkbox" id="rememberBuild" checked></div>
+ </div></div>
+ <div class="settings-group"><h3>Appearance</h3><div class="settings-card">
+ <div class="setting"><span class="setting-icon">◐</span><div class="setting-copy"><strong>Theme Mode</strong><small>Dark green glass theme</small></div><span class="chevron">›</span></div>
+ <div class="setting"><span class="setting-icon">●</span><div class="setting-copy"><strong>Accent Color</strong><small>Emerald green</small></div><span style="width:20px;height:20px;border-radius:50%;background:#08d875;box-shadow:0 0 15px #08d87566"></span></div>
+ </div></div>
+ <div class="settings-group"><h3>Storage & Notifications</h3><div class="settings-card">
+ <div class="setting"><span class="setting-icon">▤</span><div class="setting-copy"><strong>Build History</strong><small>Clear locally remembered build labels</small></div><button class="link-btn" id="clearLabels">Clear</button></div>
+ <div class="setting"><span class="setting-icon">♧</span><div class="setting-copy"><strong>Build Notifications</strong><small>Show completion and failure messages</small></div><input class="switch" type="checkbox" id="notifications" checked></div>
+ </div></div>
+ <div class="settings-group"><h3>About & Credits</h3><div class="settings-card">
+ <div class="setting"><span class="setting-icon">ⓘ</span><div class="setting-copy"><strong>About APK Compiler</strong><small>Version 1.0 · Android build studio</small></div><span class="chevron">›</span></div>
+ <div class="setting"><span class="setting-icon">★</span><div class="setting-copy"><strong>Admin & Developer Credits</strong><small>Android Cus</small></div><span class="chevron">›</span></div>
+ </div></div>
+ <div class="panel credits"><div class="brand-icon">🤖</div><div><strong>APK Compiler</strong><small>Admin & Developer: Android Cus<br>Built for Android creators.</small></div></div>
+</section>
+</main>
+<nav class="bottom-nav" aria-label="Main navigation">
+ <button class="nav-btn active" data-tab="home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg>Home</button>
+ <button class="nav-btn" data-tab="builds"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 2 9 5-9 5-9-5 9-5Zm-9 10 9 5 9-5M3 17l9 5 9-5"/></svg>Builds</button>
+ <button class="nav-btn" data-tab="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="m19.4 15 .1.1 1.4 1.1-1.4 2.4-1.7-.6a8 8 0 0 1-1.6.9l-.3 1.8h-2.8l-.3-1.8a8 8 0 0 1-1.6-.9l-1.7.6-1.4-2.4 1.4-1.1a7 7 0 0 1 0-1.9l-1.4-1.1 1.4-2.4 1.7.6a8 8 0 0 1 1.6-.9l.3-1.8h2.8l.3 1.8a8 8 0 0 1 1.6.9l1.7-.6 1.4 2.4-1.4 1.1a7 7 0 0 1 0 1.8Z"/></svg>Settings</button>
+</nav><div class="toast" id="toast"></div>
+<script>
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const labelsKey='apkcompiler_build_labels_v1',prefsKey='apkcompiler_prefs_v1';
+let builds=[],labels=JSON.parse(localStorage.getItem(labelsKey)||'{}'),prefs=JSON.parse(localStorage.getItem(prefsKey)||'{}');
+const esc=s=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const outputName=o=>({apk:'Debug APK',aab:'Debug AAB',both:'Debug APK + AAB','release-apk':'Release APK','release-aab':'Release AAB','release-both':'Release APK + AAB'}[o]||o||'Android build');
+function toast(t){const el=$('#toast');el.textContent=t;el.style.display='block';clearTimeout(window.toastTimer);window.toastTimer=setTimeout(()=>el.style.display='none',2600)}
+function iconFor(name){const palette=['linear-gradient(145deg,#0aa95a,#064d30)','linear-gradient(145deg,#e04444,#8e1717)','linear-gradient(145deg,#286fe5,#173b9b)','linear-gradient(145deg,#7647dc,#39208e)','linear-gradient(145deg,#e97719,#a33d0b)'];let n=0;for(const c of String(name))n=(n+c.charCodeAt(0))%palette.length;return palette[n]}
+function appTile(name,cls='app-tile'){const initials=String(name||'AP').trim().split(/[\s_-]+/).slice(0,2).map(x=>x[0]||'').join('').toUpperCase()||'AP';return '<div class="'+cls+'" style="background:'+iconFor(name)+'">'+esc(initials)+'</div>'}
+function fileUrl(id,key){return '/api/download?id='+encodeURIComponent(id)+'&file='+encodeURIComponent(key)}
+function availableArtifact(b){return Object.keys(b.artifacts||{}).filter(k=>['apk','aab'].includes(k))}
+function statusMarkup(b){if(b.state==='complete')return '<span class="state">● Completed</span>';if(b.state==='failed')return '<span class="state failed">● Failed</span>';return '<span class="state building">● '+esc(b.state||'Building')+'</span>'}
+function buildName(b){return labels[b.id]||('Android Project '+String(b.id||'').slice(0,5).toUpperCase())}
+function recentCard(b){const name=buildName(b),files=availableArtifact(b),key=files[0];return '<article class="recent-card">'+appTile(name)+'<button class="download-small" '+(!key?'disabled':'')+' data-download="'+esc(b.id)+'" data-file="'+(key||'')+'" aria-label="Download build"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m-5-5 5 5 5-5M4 19h16"/></svg></button><h3>'+esc(name)+'</h3><p>'+esc(outputName(b.output_kind))+'</p>'+statusMarkup(b)+'</article>'}
+function buildRow(b){const name=buildName(b),files=availableArtifact(b),key=files[0],size=key?b.artifacts[key].size:0;return '<article class="build-row">'+appTile(name)+'<div class="build-info"><h3>'+esc(name)+'</h3><p>'+esc(outputName(b.output_kind))+(size?' · '+(size/1048576).toFixed(1)+' MB':'')+'</p>'+statusMarkup(b)+(b.state==='failed'?'<p>'+esc((b.error||'Build failed').slice(0,110))+'</p>':'')+'</div><button class="download-action" '+(!key?'disabled':'')+' data-download="'+esc(b.id)+'" data-file="'+(key||'')+'" aria-label="Download artifact"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m-5-5 5 5 5-5M4 19h16"/></svg></button></article>'}
+function renderBuilds(){const sorted=[...builds].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));$('#recentBuilds').innerHTML=sorted.length?sorted.slice(0,12).map(recentCard).join(''):'<div class="empty">No builds yet. Your completed apps will appear here.</div>';$('#buildList').innerHTML=sorted.length?sorted.map(buildRow).join(''):'<div class="panel empty">Your builds will appear here after you compile your first project.</div>'}
+async function refreshBuilds(){try{const r=await fetch('/api/builds',{cache:'no-store'});const v=await r.json();if(!r.ok)throw Error(v.error||'Could not load builds');builds=v.builds||[];renderBuilds()}catch(e){$('#buildList').innerHTML='<div class="panel empty">Build history could not be loaded. '+esc(e.message)+'</div>'}}
+function navigate(tab){$$('.page').forEach(p=>p.classList.remove('active'));$('#'+tab+'Page').classList.add('active');$$('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));$('#heroEyebrow').textContent=tab==='home'?'Welcome to':tab==='builds'?'Your compiled apps':'Manage your workspace';if(tab==='builds')refreshBuilds();window.scrollTo({top:0,behavior:'smooth'})}
+$$('[data-tab]').forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.tab)));$$('[data-goto]').forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.goto)));
+$('#chooseBtn').addEventListener('click',()=>$('#projectFile').click());$('#refreshBtn').addEventListener('click',()=>refreshBuilds().then(()=>toast('Build list refreshed')));
+document.addEventListener('click',e=>{const b=e.target.closest('[data-download]');if(b&&!b.disabled){const url=fileUrl(b.dataset.download,b.dataset.file);const a=document.createElement('a');a.href=url;a.download='';document.body.appendChild(a);a.click();a.remove()}});
+$('#buildForm').addEventListener('submit',async ev=>{ev.preventDefault();const file=$('#projectFile').files[0];if(!file)return;if(!file.name.toLowerCase().endsWith('.zip')){ $('#buildError').textContent='Choose a .zip file.';return}if(file.size>50*1024*1024){$('#buildError').textContent='Maximum ZIP size is 50 MB.';return}
+ const btn=$('#startBtn');btn.disabled=true;$('#buildError').textContent='';$('#buildStatus').textContent='Preparing secure upload…';
+ try{const signed=await fetch('/api/upload-url',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({filename:file.name})});const sign=await signed.json();if(!signed.ok)throw Error(sign.error||'Could not prepare upload.');
+ await new Promise((resolve,reject)=>{const x=new XMLHttpRequest();x.open('PUT',sign.uploadUrl);x.setRequestHeader('Content-Type','application/zip');x.upload.onprogress=p=>{if(p.lengthComputable)$('#buildStatus').textContent='Uploading project · '+Math.round(p.loaded/p.total*100)+'%'};x.onload=()=>x.status>=200&&x.status<300?resolve():reject(Error('Object Storage upload failed ('+x.status+').'));x.onerror=()=>reject(Error('Network error during upload.'));x.send(file)});
+ $('#buildStatus').textContent='Starting Android build…';const output=$('#outputKind').value;const started=await fetch('/api/build',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({pathname:sign.pathname,output})});const job=await started.json();if(!started.ok)throw Error(job.error||'Could not start build.');
+ labels[job.jobId]=file.name.replace(/\.zip$/i,'');localStorage.setItem(labelsKey,JSON.stringify(labels));$('#buildStatus').textContent='Build started · '+job.jobId.slice(0,8);toast('Build started successfully');navigate('builds');await refreshBuilds();pollJob(job.jobId);
+ }catch(err){$('#buildStatus').textContent='Build could not start';$('#buildError').textContent=err.message}finally{btn.disabled=false}});
+async function pollJob(id){try{const r=await fetch('/api/status?id='+encodeURIComponent(id),{cache:'no-store'});const v=await r.json();if(!r.ok)throw Error(v.error||'Status unavailable');await refreshBuilds();if(v.state==='complete'){toast('Your build is ready to download');if(prefs.notifications!==false)$('#buildStatus').textContent='Build completed successfully.';return}if(v.state==='failed'){toast('Build failed — open Builds for details');return}setTimeout(()=>pollJob(id),5000)}catch(e){setTimeout(()=>pollJob(id),8000)}}
+function savePrefs(){localStorage.setItem(prefsKey,JSON.stringify(prefs))}
+$('#defaultOutput').value=prefs.output||'apk';$('#defaultType').value=prefs.type||'debug';$('#rememberBuild').checked=prefs.remember!==false;$('#notifications').checked=prefs.notifications!==false;
+$('#defaultOutput').addEventListener('change',e=>{prefs.output=e.target.value;savePrefs();toast('Default output saved')});$('#defaultType').addEventListener('change',e=>{prefs.type=e.target.value;savePrefs();toast('Default build type saved')});$('#rememberBuild').addEventListener('change',e=>{prefs.remember=e.target.checked;savePrefs()});$('#notifications').addEventListener('change',e=>{prefs.notifications=e.target.checked;savePrefs();toast('Notification preference saved')});
+$('#clearLabels').addEventListener('click',()=>{if(confirm('Clear locally saved project names? Build records and downloaded files will remain.')){labels={};localStorage.removeItem(labelsKey);renderBuilds();toast('Saved labels cleared')}});
+$('#notifyBtn').addEventListener('click',()=>toast('Build notifications are shown here when enabled.'));
+$('#outputKind').value=prefs.output?(prefs.type==='release'?'release-'+(prefs.output==='both'?'both':prefs.output):prefs.output):'apk';
+if(prefs.remember===false)$('#outputKind').addEventListener('change',()=>{});
+refreshBuilds();
+</script>
+</body></html>
