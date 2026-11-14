@@ -19,7 +19,7 @@ export default async function handler(req,res) {
     await s3.send(new PutBucketCorsCommand({
       Bucket:process.env.AWS_BUCKET,
       CORSConfiguration:{CORSRules:[{
-        AllowedOrigins:["https://apk-compiler-sdcompaniesugs-projects.vercel.app","https://apk-compiler-ten.vercel.app"],
+        AllowedOrigins:["https://apk-compiler-sdcompaniesugs-projects.vercel.app","https://apk-compiler-ten.vercel.app","https://apk-compiler-j8dr9eirw-sdcompaniesugs-projects.vercel.app"],
         AllowedMethods:["PUT","HEAD"],
         AllowedHeaders:["*"],
         ExposeHeaders:["ETag"],
