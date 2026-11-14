@@ -243,13 +243,35 @@ PY
  exit "$RC"
 fi
 python3 - <<'PY'
-import json,glob
+import json,glob,os,subprocess,re,zipfile,base64
 a=glob.glob('/vercel/sandbox/output/*.apk')
 b=glob.glob('/vercel/sandbox/output/*.aab')
 if not a and not b:
  open('/vercel/sandbox/status.json','w').write(json.dumps({'state':'failed','error':'Build completed but no requested APK or AAB artifact was found.'}))
 else:
- open('/vercel/sandbox/status.json','w').write(json.dumps({'state':'complete','apk':a[0] if a else None,'aab':b[0] if b else None}))
+ meta={}
+ if a:
+  sdk=os.environ.get('ANDROID_HOME') or os.environ.get('ANDROID_SDK_ROOT') or ''
+  tools=glob.glob(os.path.join(sdk,'build-tools','*','aapt'))
+  tools.sort(reverse=True)
+  if tools:
+   try:
+    badging=subprocess.check_output([tools[0],'dump','badging',a[0]],stderr=subprocess.DEVNULL,text=True,timeout=15)
+    label=re.search(r"^application-label:'(.*)'$",badging,re.M)
+    if label: meta['appName']=label.group(1)[:120]
+    icons=re.findall(r"^application-icon-[^:]+:'([^']+)'$",badging,re.M)
+    with zipfile.ZipFile(a[0]) as apk:
+     for icon in icons:
+      try:
+       data=apk.read(icon)
+       if len(data)<=180000 and (data.startswith(b'\x89PNG') or data.startswith(b'RIFF') or data.startswith(b'\xff\xd8')):
+        meta['appIconBase64']=base64.b64encode(data).decode('ascii')
+        break
+      except Exception: pass
+   except Exception: pass
+ state={'state':'complete','apk':a[0] if a else None,'aab':b[0] if b else None}
+ state.update(meta)
+ open('/vercel/sandbox/status.json','w').write(json.dumps(state))
 PY
 `;
 
@@ -392,6 +414,8 @@ export async function getBuild(id) {
       }));
       artifacts[key] = {size:file.length,url:"/api/download?id="+id+"&file="+key};
     }
+    if (state.appName) artifacts.appName = String(state.appName).slice(0,120);
+    if (state.appIconBase64) artifacts.appIconBase64 = String(state.appIconBase64).slice(0,240000);
     if (!Object.keys(artifacts).length) {
       const error = "Build completed but no APK or AAB artifact could be read.";
       await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2",[error,id]);
