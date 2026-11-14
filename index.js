@@ -5,6 +5,8 @@ import build from "./api/build.js";
 import status from "./api/status.js";
 import download from "./api/download.js";
 import uploadUrl from "./api/upload-url.js";
+import builds from "./api/builds.js";
+import ready from "./api/ready.js";
 import mcp from "./api/mcp.js";
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -24,6 +26,8 @@ export default async function handler(req, res) {
     if (url.pathname === "/api/build") { if ((req.headers["content-type"] || "").includes("application/json")) await parseJson(req); return await build(req, res); }
     if (url.pathname === "/api/upload-url") { await parseJson(req); return await uploadUrl(req, res); }
     if (url.pathname === "/api/status") return await status(req, res);
+    if (url.pathname === "/api/builds") return await builds(req, res);
+    if (url.pathname === "/api/ready") return await ready(req, res);
     if (url.pathname === "/api/download") return await download(req, res);
     if (url.pathname === "/api/mcp") {
       if (req.method === "POST") await parseJson(req);
