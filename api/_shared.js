@@ -286,7 +286,8 @@ async function ensureBucketCors(client) {
       CORSRules: [{
         AllowedOrigins: [
           "https://apk-compiler-sdcompaniesugs-projects.vercel.app",
-          "https://apk-compiler-ten.vercel.app"
+          "https://apk-compiler-ten.vercel.app",
+          "https://apk-compiler-j8dr9eirw-sdcompaniesugs-projects.vercel.app"
         ],
         AllowedMethods: ["PUT","HEAD"],
         AllowedHeaders: ["*"],
