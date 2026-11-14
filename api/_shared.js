@@ -317,12 +317,13 @@ export async function startBuild(zip, output = "apk", existingId = null) {
   const id = existingId || newId();
   const name = "apk-build-" + id;
   const sql = database();
-  const sandbox = await Sandbox.create({
-    name,source:{type:"snapshot",snapshotId:process.env.ANDROID_BUILD_SNAPSHOT_ID},
-    runtime:"node24",region:"iad1",resources:{vcpus:4,memory:8192},
-    timeout:45*60*1000,persistent:false,networkPolicy:"allow-all"
-  });
+  let sandbox;
   try {
+    sandbox = await Sandbox.create({
+      name,source:{type:"snapshot",snapshotId:process.env.ANDROID_BUILD_SNAPSHOT_ID},
+      runtime:"node24",region:"iad1",resources:{vcpus:4,memory:8192},
+      timeout:45*60*1000,persistent:false,networkPolicy:"allow-all"
+    });
     await sandbox.writeFiles([
       {path:"/vercel/sandbox/input/project.zip",content:zip},
       {path:"/vercel/sandbox/status.json",content:Buffer.from(JSON.stringify({state:"queued"}))},
@@ -335,7 +336,7 @@ export async function startBuild(zip, output = "apk", existingId = null) {
     );
     return {jobId:id,state:"building",statusUrl:"/api/status?id="+id};
   } catch (error) {
-    try { await sandbox.stop(); } catch {}
+    try { if (sandbox) await sandbox.stop(); } catch {}
     await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2",[String(error?.message||error).slice(0,12000),id]);
     throw error;
   }
