@@ -426,3 +426,29 @@ export async function downloadArtifact(id,file,res) {
   }
   res.end();
 }
+
+
+export async function deleteBuild(id) {
+  if (!/^[a-f0-9]{32}$/.test(id || "")) {
+    const error = new Error("Invalid build ID."); error.statusCode = 400; throw error;
+  }
+  const sql = database();
+  const rows = await sql.query(
+    "SELECT id,state,sandbox_name,upload_key FROM build_jobs WHERE id=$1 LIMIT 1", [id]
+  );
+  if (!rows.length) {
+    const error = new Error("Build not found."); error.statusCode = 404; throw error;
+  }
+  const job = rows[0];
+  if (job.sandbox_name) {
+    try {
+      const sandbox = await Sandbox.get({ name: job.sandbox_name, resume: true });
+      await sandbox.stop();
+    } catch {}
+  }
+  const client = storage();
+  const keys = [job.upload_key, "builds/" + id + "/apk.apk", "builds/" + id + "/aab.aab"].filter(Boolean);
+  await Promise.all(keys.map(key => client.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET, Key: key }))));
+  await sql.query("DELETE FROM build_jobs WHERE id=$1", [id]);
+  return { success: true, deleted: id };
+}
