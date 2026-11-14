@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { put, get, del } from "@vercel/blob";
+import { neon } from "@neondatabase/serverless";
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { Sandbox } from "@vercel/sandbox";
 
 export function json(res, status, data) {
@@ -251,144 +253,154 @@ else:
 PY
 `;
 
-export async function startBuild(zip, output = "apk") {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) throw new Error("Vercel Blob is not configured.");
-  const snapshotId = process.env.ANDROID_BUILD_SNAPSHOT_ID;
-  if (!snapshotId) throw new Error("Android build snapshot is not configured.");
-  if (!["apk", "aab", "both", "release-apk", "release-aab", "release-both"].includes(output)) throw new Error("Choose a supported debug or release output.");
+
+function database() {
+  if (!process.env.DATABASE_URL) throw new Error("Neon database is not configured.");
+  return neon(process.env.DATABASE_URL);
+}
+function storage() {
+  const required = ["AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","AWS_ENDPOINT_URL_S3","AWS_REGION","AWS_BUCKET"];
+  for (const key of required) if (!process.env[key]) throw new Error("Neon Object Storage is missing " + key + ".");
+  return new S3Client({
+    region: process.env.AWS_REGION,
+    endpoint: process.env.AWS_ENDPOINT_URL_S3,
+    forcePathStyle: true,
+    credentials: { accessKeyId: process.env.AWS_ACCESS_KEY_ID, secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY }
+  });
+}
+async function streamToBuffer(body, maxBytes = 50 * 1024 * 1024) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of body) {
+    const part = Buffer.from(chunk);
+    size += part.length;
+    if (size > maxBytes) throw new Error("Uploaded project ZIP exceeds 50 MB.");
+    chunks.push(part);
+  }
+  return Buffer.concat(chunks, size);
+}
+export async function createUpload(id, filename) {
+  if (!/\.zip$/i.test(String(filename || ""))) throw new Error("Choose a .zip project file.");
+  const key = "uploads/" + id + ".zip";
+  const client = storage();
+  const uploadUrl = await getSignedUrl(client, new PutObjectCommand({
+    Bucket: process.env.AWS_BUCKET, Key: key, ContentType: "application/zip"
+  }), { expiresIn: 900 });
+  const sql = database();
+  await sql.query(
+    "INSERT INTO build_jobs (id,state,output_kind,upload_key,created_at,updated_at,expires_at) VALUES ($1,'queued','apk',$2,now(),now(),now()+interval '24 hours') ON CONFLICT (id) DO UPDATE SET upload_key=EXCLUDED.upload_key,updated_at=now()",
+    [id,key]
+  );
+  return { pathname:key,uploadUrl,validUntil:Date.now()+15*60*1000,maxBytes:50*1024*1024 };
+}
+export async function startBuild(zip, output = "apk", existingId = null) {
+  if (!["apk","aab","both","release-apk","release-aab","release-both"].includes(output)) throw new Error("Choose a supported debug or release output.");
   if (!Buffer.isBuffer(zip) || zip.length < 22 || zip.length > 50 * 1024 * 1024) throw new Error("Project ZIP must be between 22 bytes and 50 MB.");
-  const id = newId();
+  const id = existingId || newId();
   const name = "apk-build-" + id;
+  const sql = database();
   const sandbox = await Sandbox.create({
-    name,
-    source: { type: "snapshot", snapshotId },
-    runtime: "node24",
-    region: "iad1",
-    resources: { vcpus: 4, memory: 8192 },
-    timeout: 45 * 60 * 1000,
-    persistent: false,
-    networkPolicy: "allow-all"
+    name,source:{type:"snapshot",snapshotId:process.env.ANDROID_BUILD_SNAPSHOT_ID},
+    runtime:"node24",region:"iad1",resources:{vcpus:4,memory:8192},
+    timeout:45*60*1000,persistent:false,networkPolicy:"allow-all"
   });
   try {
     await sandbox.writeFiles([
-      { path: "/vercel/sandbox/input/project.zip", content: zip },
-      { path: "/vercel/sandbox/status.json", content: Buffer.from(JSON.stringify({ state: "queued" })) },
-      { path: "/vercel/sandbox/run-build.sh", content: Buffer.from(buildScript), mode: 0o755 }
+      {path:"/vercel/sandbox/input/project.zip",content:zip},
+      {path:"/vercel/sandbox/status.json",content:Buffer.from(JSON.stringify({state:"queued"}))},
+      {path:"/vercel/sandbox/run-build.sh",content:Buffer.from(buildScript),mode:0o755}
     ]);
-    await sandbox.runCommand({ cmd: "bash", args: ["/vercel/sandbox/run-build.sh"], detached: true, env: { OUTPUT_KIND: output }, timeoutMs: 45 * 60 * 1000 });
-    await put("jobs/" + id + ".json", JSON.stringify({ id, name, output, createdAt: new Date().toISOString() }), {
-      access: "private", contentType: "application/json", addRandomSuffix: false,
-      allowOverwrite: true
-    });
-    return { jobId: id, state: "queued", statusUrl: "/api/status?id=" + id };
+    await sandbox.runCommand({cmd:"bash",args:["/vercel/sandbox/run-build.sh"],detached:true,env:{OUTPUT_KIND:output},timeoutMs:45*60*1000});
+    await sql.query(
+      "INSERT INTO build_jobs (id,state,output_kind,sandbox_name,created_at,updated_at,expires_at) VALUES ($1,'building',$2,$3,now(),now(),now()+interval '7 days') ON CONFLICT (id) DO UPDATE SET state='building',output_kind=EXCLUDED.output_kind,sandbox_name=EXCLUDED.sandbox_name,updated_at=now(),error=NULL",
+      [id,output,name]
+    );
+    return {jobId:id,state:"building",statusUrl:"/api/status?id="+id};
   } catch (error) {
     try { await sandbox.stop(); } catch {}
+    await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2",[String(error?.message||error).slice(0,12000),id]);
     throw error;
   }
 }
-
-
 export async function startBuildFromBlob(pathname, output = "apk") {
   if (typeof pathname !== "string" || !/^uploads\/[a-f0-9]{32}\.zip$/.test(pathname)) throw new Error("Invalid uploaded project reference.");
-  const blob = await get(pathname, { access: "private" });
-  if (!blob || blob.statusCode !== 200 || !blob.stream) throw new Error("Uploaded project ZIP was not found.");
-  const chunks = [];
-  let size = 0;
-  const reader = blob.stream.getReader();
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > 50 * 1024 * 1024) throw new Error("Project ZIP exceeds 50 MB.");
-      chunks.push(Buffer.from(value));
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const zip = Buffer.concat(chunks, size);
-  const job = await startBuild(zip, output);
-  try { await del(pathname, { access: "private" }); } catch {}
+  const id = pathname.split("/")[1].replace(/\.zip$/,"");
+  const sql = database();
+  const rows = await sql.query("SELECT id,state,upload_key FROM build_jobs WHERE id=$1 LIMIT 1",[id]);
+  if (!rows.length || rows[0].upload_key !== pathname) throw new Error("Uploaded project was not found or has expired.");
+  const client = storage();
+  const response = await client.send(new GetObjectCommand({Bucket:process.env.AWS_BUCKET,Key:pathname}));
+  const zip = await streamToBuffer(response.Body);
+  const job = await startBuild(zip,output,id);
+  try { await client.send(new DeleteObjectCommand({Bucket:process.env.AWS_BUCKET,Key:pathname})); } catch {}
   return job;
 }
-
-
-async function readPrivateJson(pathname) {
-  try {
-    const blob = await get(pathname, { access: "private" });
-    if (!blob || blob.statusCode !== 200 || !blob.stream) return null;
-    const chunks = [];
-    const reader = blob.stream.getReader();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(Buffer.from(value));
-      }
-    } finally {
-      reader.releaseLock();
-    }
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  } catch {
-    return null;
-  }
-}
-
-async function saveBuildResult(id, result) {
-  await put("results/" + id + ".json", JSON.stringify(result), {
-    access: "private",
-    contentType: "application/json",
-    addRandomSuffix: false,
-    allowOverwrite: true
-  });
-  return result;
-}
-
 export async function getBuild(id) {
   if (!/^[a-f0-9]{32}$/.test(id || "")) throw new Error("Invalid job ID.");
-  const cached = await readPrivateJson("results/" + id + ".json");
-  if (cached) return cached;
-
-  const sandbox = await Sandbox.get({ name: "apk-build-" + id, resume: true });
-  const raw = await sandbox.readFileToBuffer({ path: "/vercel/sandbox/status.json" });
-  if (!raw) return { jobId: id, state: "queued" };
-  const state = JSON.parse(raw.toString("utf8"));
-
-  if (state.state === "failed") {
-    const result = await saveBuildResult(id, { jobId: id, state: "failed", error: state.error || "Build failed." });
+  const sql = database();
+  const rows = await sql.query("SELECT id,state,output_kind,sandbox_name,error,artifacts FROM build_jobs WHERE id=$1 LIMIT 1",[id]);
+  if (!rows.length) throw new Error("Build not found.");
+  const job = rows[0];
+  if (job.state === "complete") return {jobId:id,state:"complete",artifacts:job.artifacts||{}};
+  if (job.state === "failed") return {jobId:id,state:"failed",error:job.error||"Build failed."};
+  if (!job.sandbox_name) return {jobId:id,state:job.state||"queued"};
+  let sandbox;
+  try {
+    sandbox = await Sandbox.get({name:job.sandbox_name,resume:true});
+    const raw = await sandbox.readFileToBuffer({path:"/vercel/sandbox/status.json"});
+    if (!raw) return {jobId:id,state:job.state||"building"};
+    const state = JSON.parse(raw.toString("utf8"));
+    if (state.state === "failed") {
+      const error = String(state.error||"Build failed.").slice(0,12000);
+      await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2",[error,id]);
+      try { await sandbox.stop(); } catch {}
+      return {jobId:id,state:"failed",error};
+    }
+    if (state.state !== "complete") return {jobId:id,state:state.state||"building"};
+    const client = storage();
+    const artifacts = {};
+    for (const key of ["apk","aab"]) {
+      if (!state[key]) continue;
+      const file = await sandbox.readFileToBuffer({path:state[key]});
+      if (!file?.length) continue;
+      const objectKey = "builds/"+id+"/"+key+(key==="apk"?".apk":".aab");
+      await client.send(new PutObjectCommand({
+        Bucket:process.env.AWS_BUCKET,Key:objectKey,Body:file,
+        ContentType:key==="apk"?"application/vnd.android.package-archive":"application/octet-stream"
+      }));
+      artifacts[key] = {size:file.length,url:"/api/download?id="+id+"&file="+key};
+    }
+    if (!Object.keys(artifacts).length) {
+      const error = "Build completed but no APK or AAB artifact could be read.";
+      await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2",[error,id]);
+      try { await sandbox.stop(); } catch {}
+      return {jobId:id,state:"failed",error};
+    }
+    await sql.query("UPDATE build_jobs SET state='complete',artifacts=$1::jsonb,updated_at=now() WHERE id=$2",[JSON.stringify(artifacts),id]);
     try { await sandbox.stop(); } catch {}
-    return result;
+    return {jobId:id,state:"complete",artifacts};
+  } catch (error) {
+    if (/not found|does not exist/i.test(String(error?.message||""))) return {jobId:id,state:job.state||"building"};
+    throw error;
   }
-  if (state.state !== "complete") return { jobId: id, ...state };
-
-  const artifacts = {};
-  for (const key of ["apk", "aab"]) {
-    if (!state[key]) continue;
-    const file = await sandbox.readFileToBuffer({ path: state[key] });
-    if (!file?.length) continue;
-    const blob = await put("builds/" + id + "/" + key + (key === "apk" ? ".apk" : ".aab"), file, {
-      access: "private",
-      contentType: key === "apk" ? "application/vnd.android.package-archive" : "application/octet-stream",
-      addRandomSuffix: false,
-      allowOverwrite: true
-    });
-    artifacts[key] = { url: blob.url, size: file.length };
+}
+export async function downloadArtifact(id,file,res) {
+  if (!/^[a-f0-9]{32}$/.test(id||"") || !["apk","aab"].includes(file)) throw new Error("Invalid artifact request.");
+  const sql = database();
+  const rows = await sql.query("SELECT state,artifacts FROM build_jobs WHERE id=$1 LIMIT 1",[id]);
+  if (!rows.length || rows[0].state!=="complete" || !rows[0].artifacts?.[file]) {
+    const error = new Error("Artifact not found."); error.statusCode=404; throw error;
   }
-
-  const result = Object.keys(artifacts).length
-    ? {
-        jobId: id,
-        state: "complete",
-        artifacts: Object.fromEntries(
-          Object.entries(artifacts).map(([key, value]) => [
-            key,
-            { ...value, url: "/api/download?id=" + id + "&file=" + key }
-          ])
-        )
-      }
-    : { jobId: id, state: "failed", error: "Build completed but no APK or AAB artifact could be read." };
-
-  await saveBuildResult(id, result);
-  try { await sandbox.stop(); } catch {}
-  return result;
+  const key = "builds/"+id+"/"+file+(file==="apk"?".apk":".aab");
+  const client = storage();
+  const result = await client.send(new GetObjectCommand({Bucket:process.env.AWS_BUCKET,Key:key}));
+  res.statusCode=200;
+  res.setHeader("content-type",file==="apk"?"application/vnd.android.package-archive":"application/octet-stream");
+  res.setHeader("content-disposition",'attachment; filename="android-'+file+(file==="apk"?".apk":".aab")+'"');
+  res.setHeader("cache-control","private, no-store");
+  res.setHeader("x-content-type-options","nosniff");
+  for await (const chunk of result.Body) {
+    if (!res.write(Buffer.from(chunk))) await new Promise(resolve=>res.once("drain",resolve));
+  }
+  res.end();
 }
