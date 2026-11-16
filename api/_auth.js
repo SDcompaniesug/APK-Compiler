@@ -80,7 +80,7 @@ export async function registerAccount(name, email, password) {
 export async function loginAccount(email, password) {
   const cleanEmail = String(email || "").trim().toLowerCase();
   const rows = await db().query(
-    "SELECT id,email,name,password_hash FROM public.app_users WHERE email=$1 LIMIT 1",
+    "SELECT id,email,name,password_hash,status FROM public.app_users WHERE email=$1 LIMIT 1",
     [cleanEmail]
   );
   const row = rows[0];
@@ -97,6 +97,7 @@ export async function loginAccount(email, password) {
     }
   }
   if (!valid) throw Object.assign(new Error("Incorrect email or password."), { statusCode: 401 });
+  if (row.status && row.status !== "active") throw Object.assign(new Error("This account is suspended or banned."), { statusCode: 403 });
   return issueSession({ id: row.id, email: row.email, name: row.name });
 }
 export async function rotateRefreshToken(refreshToken) {
@@ -130,9 +131,10 @@ export async function requireAuth(req) {
   const claims = match ? verifyAccess(match[1]) : null;
   if (!claims) throw Object.assign(new Error("Authentication required. Please sign in."), { statusCode: 401 });
   const rows = await db().query(
-    "SELECT s.id,u.id AS user_id,u.email,u.name FROM public.auth_sessions s JOIN public.app_users u ON u.id=s.user_id WHERE s.id=$1 AND s.user_id=$2 AND s.revoked_at IS NULL AND s.expires_at>now() LIMIT 1",
+    "SELECT s.id,u.id AS user_id,u.email,u.name,u.status FROM public.auth_sessions s JOIN public.app_users u ON u.id=s.user_id WHERE s.id=$1 AND s.user_id=$2 AND s.revoked_at IS NULL AND s.expires_at>now() LIMIT 1",
     [claims.sid, claims.sub]
   );
   if (!rows.length) throw Object.assign(new Error("Your session is no longer valid. Please sign in again."), { statusCode: 401 });
+  if (rows[0].status && rows[0].status !== "active") throw Object.assign(new Error("This account is suspended or banned."), { statusCode: 403 });
   return { id: rows[0].user_id, email: rows[0].email, name: rows[0].name, sessionId: rows[0].id };
 }
