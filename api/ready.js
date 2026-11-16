@@ -5,10 +5,13 @@ import { json } from "./_shared.js";
 export default async function handler(req,res) {
   if (req.method !== "GET") return json(res,405,{error:"Use GET."});
   try {
-    const required = ["DATABASE_URL","AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","AWS_ENDPOINT_URL_S3","AWS_REGION","AWS_BUCKET"];
+    const required = ["DATABASE_URL","AUTH_JWT_SECRET","AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","AWS_ENDPOINT_URL_S3","AWS_REGION","AWS_BUCKET"];
     for (const key of required) if (!process.env[key]) throw new Error("Missing server configuration: "+key);
     const sql = neon(process.env.DATABASE_URL);
     await sql`SELECT 1 AS ready`;
+    await sql`SELECT 1 FROM public.app_users LIMIT 1`;
+    await sql`SELECT 1 FROM public.auth_sessions LIMIT 1`;
+    await sql`SELECT user_id FROM public.build_jobs LIMIT 1`;
     const s3 = new S3Client({
       region:process.env.AWS_REGION,
       endpoint:process.env.AWS_ENDPOINT_URL_S3,
