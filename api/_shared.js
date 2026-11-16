@@ -19,6 +19,7 @@ async function assertPlatformBuildsAllowed(userId) {
   if (config.builds_enabled === false) throw Object.assign(new Error("New builds are temporarily disabled."), {statusCode:503});
   const active = await db.query("SELECT count(*)::int count FROM public.build_jobs WHERE user_id=$1 AND state IN ('queued','building')",[userId]);
   if (Number(active[0]?.count || 0) >= Number(config.max_concurrent_builds || 3)) throw Object.assign(new Error("You have reached the concurrent build limit."), {statusCode:429});
+  return config;
 }
 
 
@@ -330,7 +331,7 @@ async function ensureBucketCors(client) {
   }));
 }
 export async function createUpload(id, filename, userId) {
-  await assertPlatformBuildsAllowed(userId);
+  const platform = await assertPlatformBuildsAllowed(userId);
   if (!/\.zip$/i.test(String(filename || ""))) throw new Error("Choose a .zip project file.");
   const key = "uploads/" + id + ".zip";
   const client = storage();
@@ -348,12 +349,12 @@ export async function createUpload(id, filename, userId) {
     error.statusCode = 409;
     throw error;
   }
-  return { pathname:key,uploadUrl,validUntil:Date.now()+15*60*1000,maxBytes:50*1024*1024 };
+  return { pathname:key,uploadUrl,validUntil:Date.now()+15*60*1000,maxBytes:Number(platform.max_upload_mb||50)*1024*1024 };
 }
 export async function startBuild(zip, output = "apk", existingId = null, userId) {
-  await assertPlatformBuildsAllowed(userId);
+  const platform = await assertPlatformBuildsAllowed(userId);
   if (!["apk","aab","both","release-apk","release-aab","release-both"].includes(output)) throw new Error("Choose a supported debug or release output.");
-  if (!Buffer.isBuffer(zip) || zip.length < 22 || zip.length > 50 * 1024 * 1024) throw new Error("Project ZIP must be between 22 bytes and 50 MB.");
+  if (!Buffer.isBuffer(zip) || zip.length < 22 || zip.length > Number(platform.max_upload_mb||50) * 1024 * 1024) throw new Error("Project ZIP exceeds the administrator-configured upload limit.");
   const id = existingId || newId();
   const name = "apk-build-" + id;
   const sql = database();
@@ -371,7 +372,7 @@ export async function startBuild(zip, output = "apk", existingId = null, userId)
     ]);
     await sandbox.runCommand({cmd:"bash",args:["/vercel/sandbox/run-build.sh"],detached:true,env:{OUTPUT_KIND:output},timeoutMs:45*60*1000});
     const claimed = await sql.query(
-      "INSERT INTO build_jobs (id,user_id,state,output_kind,sandbox_name,created_at,updated_at,expires_at) VALUES ($1,$2,'building',$3,$4,now(),now(),now()+interval '7 days') ON CONFLICT (id) DO UPDATE SET state='building',output_kind=EXCLUDED.output_kind,sandbox_name=EXCLUDED.sandbox_name,updated_at=now(),error=NULL WHERE build_jobs.user_id=EXCLUDED.user_id RETURNING id",
+      "INSERT INTO build_jobs (id,user_id,state,output_kind,sandbox_name,created_at,updated_at,expires_at) VALUES ($1,$2,'building',$3,$4,now(),now(),now()+interval '7 days') ON CONFLICT (id) DO UPDATE SET state='building',output_kind=EXCLUDED.output_kind,sandbox_name=EXCLUDED.sandbox_name,updated_at=now(),error=NULL WHERE build_jobs.user_id=EXCLUDED.user_id AND build_jobs.state <> 'cancelled' RETURNING id",
       [id,userId,output,name]
     );
     if (!claimed.length) {
@@ -382,7 +383,7 @@ export async function startBuild(zip, output = "apk", existingId = null, userId)
     return {jobId:id,state:"building",statusUrl:"/api/status?id="+id};
   } catch (error) {
     try { if (sandbox) await sandbox.stop(); } catch {}
-    await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2 AND user_id=$3",[String(error?.message||error).slice(0,12000),id,userId]);
+    await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2 AND user_id=$3 AND state <> 'cancelled'",[String(error?.message||error).slice(0,12000),id,userId]);
     throw error;
   }
 }
