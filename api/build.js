@@ -1,5 +1,6 @@
 import Busboy from "busboy";
 import { startBuild, startBuildFromBlob, json } from "./_shared.js";
+import { requireAuth } from "./_auth.js";
 export const config = { api: { bodyParser: false } };
 
 async function readJson(req) {
@@ -12,9 +13,10 @@ async function readJson(req) {
 export default async function handler(req,res) {
   if (req.method !== "POST") return json(res,405,{error:"Use POST."});
   try {
+    const user = await requireAuth(req);
     if ((req.headers["content-type"] || "").includes("application/json")) {
       const body = await readJson(req);
-      const job = await startBuildFromBlob(body.pathname,body.output || "apk");
+      const job = await startBuildFromBlob(body.pathname,body.output || "apk",user.id);
       return json(res,202,job);
     }
     const bb = Busboy({headers:req.headers,limits:{fileSize:4*1024*1024,files:1,fields:2}});
@@ -37,8 +39,8 @@ export default async function handler(req,res) {
     await parsed;
     if (failed) throw new Error(failed);
     if (!zip) throw new Error("Missing project ZIP.");
-    return json(res,202,await startBuild(zip,output));
+    return json(res,202,await startBuild(zip,output,null,user.id));
   } catch (error) {
-    return json(res,400,{error:error?.message || "Build could not be started."});
+    return json(res,error.statusCode || 400,{error:error?.message || "Build could not be started."});
   }
 }
