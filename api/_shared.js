@@ -353,6 +353,9 @@ export async function createUpload(id, filename, userId) {
 }
 export async function startBuild(zip, output = "apk", existingId = null, userId) {
   const platform = await assertPlatformBuildsAllowed(userId);
+  const featureKey = output.startsWith("release-") ? "release_outputs" : "debug_outputs";
+  const featureRows = await database().query("SELECT enabled FROM public.compiler_feature_flags WHERE feature_key=$1 LIMIT 1",[featureKey]);
+  if (featureRows[0]?.enabled === false) throw Object.assign(new Error("This build output type is disabled by the administrator."),{statusCode:503});
   if (!["apk","aab","both","release-apk","release-aab","release-both"].includes(output)) throw new Error("Choose a supported debug or release output.");
   if (!Buffer.isBuffer(zip) || zip.length < 22 || zip.length > Number(platform.max_upload_mb||50) * 1024 * 1024) throw new Error("Project ZIP exceeds the administrator-configured upload limit.");
   const id = existingId || newId();
@@ -360,17 +363,18 @@ export async function startBuild(zip, output = "apk", existingId = null, userId)
   const sql = database();
   let sandbox;
   try {
+    const timeoutMs = Math.max(5,Math.min(180,Number(platform.build_timeout_minutes||45)))*60*1000;
     sandbox = await Sandbox.create({
       name,source:{type:"snapshot",snapshotId:process.env.ANDROID_BUILD_SNAPSHOT_ID},
       runtime:"node24",region:"iad1",resources:{vcpus:4,memory:8192},
-      timeout:45*60*1000,persistent:false,networkPolicy:"allow-all"
+      timeout:timeoutMs,persistent:false,networkPolicy:"allow-all"
     });
     await sandbox.writeFiles([
       {path:"/vercel/sandbox/input/project.zip",content:zip},
       {path:"/vercel/sandbox/status.json",content:Buffer.from(JSON.stringify({state:"queued"}))},
       {path:"/vercel/sandbox/run-build.sh",content:Buffer.from(buildScript),mode:0o755}
     ]);
-    await sandbox.runCommand({cmd:"bash",args:["/vercel/sandbox/run-build.sh"],detached:true,env:{OUTPUT_KIND:output},timeoutMs:45*60*1000});
+    await sandbox.runCommand({cmd:"bash",args:["/vercel/sandbox/run-build.sh"],detached:true,env:{OUTPUT_KIND:output},timeoutMs});
     const claimed = await sql.query(
       "INSERT INTO build_jobs (id,user_id,state,output_kind,sandbox_name,created_at,updated_at,expires_at) VALUES ($1,$2,'building',$3,$4,now(),now(),now()+interval '7 days') ON CONFLICT (id) DO UPDATE SET state='building',output_kind=EXCLUDED.output_kind,sandbox_name=EXCLUDED.sandbox_name,updated_at=now(),error=NULL WHERE build_jobs.user_id=EXCLUDED.user_id AND build_jobs.state <> 'cancelled' RETURNING id",
       [id,userId,output,name]
@@ -394,10 +398,12 @@ export async function startBuildFromBlob(pathname, output = "apk", userId) {
   const rows = await sql.query("SELECT id,state,upload_key FROM build_jobs WHERE id=$1 AND user_id=$2 LIMIT 1",[id,userId]);
   if (!rows.length || rows[0].upload_key !== pathname) throw new Error("Uploaded project was not found or has expired.");
   const client = storage();
+  const platform = await assertPlatformBuildsAllowed(userId);
+  const maxBytes = Number(platform.max_upload_mb||50)*1024*1024;
   const head = await client.send(new HeadObjectCommand({Bucket:process.env.AWS_BUCKET,Key:pathname}));
-  if (!Number.isFinite(head.ContentLength) || head.ContentLength < 22 || head.ContentLength > 50*1024*1024) throw new Error("Uploaded project ZIP must be between 22 bytes and 50 MB.");
+  if (!Number.isFinite(head.ContentLength) || head.ContentLength < 22 || head.ContentLength > maxBytes) throw new Error("Uploaded project ZIP exceeds the administrator-configured upload limit.");
   const response = await client.send(new GetObjectCommand({Bucket:process.env.AWS_BUCKET,Key:pathname}));
-  const zip = await streamToBuffer(response.Body);
+  const zip = await streamToBuffer(response.Body,maxBytes);
   const job = await startBuild(zip,output,id,userId);
   try { await client.send(new DeleteObjectCommand({Bucket:process.env.AWS_BUCKET,Key:pathname})); } catch {}
   return job;
