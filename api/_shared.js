@@ -360,7 +360,7 @@ export async function startBuild(zip, output = "apk", existingId = null, userId)
     return {jobId:id,state:"building",statusUrl:"/api/status?id="+id};
   } catch (error) {
     try { if (sandbox) await sandbox.stop(); } catch {}
-    await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2",[String(error?.message||error).slice(0,12000),id]);
+    await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2 AND user_id=$3",[String(error?.message||error).slice(0,12000),id,userId]);
     throw error;
   }
 }
@@ -430,7 +430,7 @@ export async function getBuild(id,userId) {
     }
     if (!Object.keys(artifacts).length) {
       const error = "Build completed but no APK or AAB artifact could be read.";
-      await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2",[error,id]);
+      await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2 AND user_id=$3",[error,id,userId]);
       try { await sandbox.stop(); } catch {}
       return {jobId:id,state:"failed",error};
     }
