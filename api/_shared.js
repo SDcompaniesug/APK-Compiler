@@ -319,7 +319,7 @@ async function ensureBucketCors(client) {
     }
   }));
 }
-export async function createUpload(id, filename) {
+export async function createUpload(id, filename, userId) {
   if (!/\.zip$/i.test(String(filename || ""))) throw new Error("Choose a .zip project file.");
   const key = "uploads/" + id + ".zip";
   const client = storage();
@@ -328,13 +328,18 @@ export async function createUpload(id, filename) {
     Bucket: process.env.AWS_BUCKET, Key: key, ContentType: "application/zip"
   }), { expiresIn: 900 });
   const sql = database();
-  await sql.query(
-    "INSERT INTO build_jobs (id,state,output_kind,upload_key,created_at,updated_at,expires_at) VALUES ($1,'queued','apk',$2,now(),now(),now()+interval '24 hours') ON CONFLICT (id) DO UPDATE SET upload_key=EXCLUDED.upload_key,updated_at=now()",
-    [id,key]
+  const inserted = await sql.query(
+    "INSERT INTO build_jobs (id,user_id,state,output_kind,upload_key,created_at,updated_at,expires_at) VALUES ($1,$2,'queued','apk',$3,now(),now(),now()+interval '24 hours') ON CONFLICT (id) DO UPDATE SET upload_key=EXCLUDED.upload_key,updated_at=now() WHERE build_jobs.user_id=EXCLUDED.user_id RETURNING id",
+    [id,userId,key]
   );
+  if (!inserted.length) {
+    const error = new Error("Could not reserve this upload for your account.");
+    error.statusCode = 409;
+    throw error;
+  }
   return { pathname:key,uploadUrl,validUntil:Date.now()+15*60*1000,maxBytes:50*1024*1024 };
 }
-export async function startBuild(zip, output = "apk", existingId = null) {
+export async function startBuild(zip, output = "apk", existingId = null, userId) {
   if (!["apk","aab","both","release-apk","release-aab","release-both"].includes(output)) throw new Error("Choose a supported debug or release output.");
   if (!Buffer.isBuffer(zip) || zip.length < 22 || zip.length > 50 * 1024 * 1024) throw new Error("Project ZIP must be between 22 bytes and 50 MB.");
   const id = existingId || newId();
@@ -353,36 +358,41 @@ export async function startBuild(zip, output = "apk", existingId = null) {
       {path:"/vercel/sandbox/run-build.sh",content:Buffer.from(buildScript),mode:0o755}
     ]);
     await sandbox.runCommand({cmd:"bash",args:["/vercel/sandbox/run-build.sh"],detached:true,env:{OUTPUT_KIND:output},timeoutMs:45*60*1000});
-    await sql.query(
-      "INSERT INTO build_jobs (id,state,output_kind,sandbox_name,created_at,updated_at,expires_at) VALUES ($1,'building',$2,$3,now(),now(),now()+interval '7 days') ON CONFLICT (id) DO UPDATE SET state='building',output_kind=EXCLUDED.output_kind,sandbox_name=EXCLUDED.sandbox_name,updated_at=now(),error=NULL",
-      [id,output,name]
+    const claimed = await sql.query(
+      "INSERT INTO build_jobs (id,user_id,state,output_kind,sandbox_name,created_at,updated_at,expires_at) VALUES ($1,$2,'building',$3,$4,now(),now(),now()+interval '7 days') ON CONFLICT (id) DO UPDATE SET state='building',output_kind=EXCLUDED.output_kind,sandbox_name=EXCLUDED.sandbox_name,updated_at=now(),error=NULL WHERE build_jobs.user_id=EXCLUDED.user_id RETURNING id",
+      [id,userId,output,name]
     );
+    if (!claimed.length) {
+      const error = new Error("Build job does not belong to this account.");
+      error.statusCode = 404;
+      throw error;
+    }
     return {jobId:id,state:"building",statusUrl:"/api/status?id="+id};
   } catch (error) {
     try { if (sandbox) await sandbox.stop(); } catch {}
-    await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2",[String(error?.message||error).slice(0,12000),id]);
+    await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2 AND user_id=$3",[String(error?.message||error).slice(0,12000),id,userId]);
     throw error;
   }
 }
-export async function startBuildFromBlob(pathname, output = "apk") {
+export async function startBuildFromBlob(pathname, output = "apk", userId) {
   if (typeof pathname !== "string" || !/^uploads\/[a-f0-9]{32}\.zip$/.test(pathname)) throw new Error("Invalid uploaded project reference.");
   const id = pathname.split("/")[1].replace(/\.zip$/,"");
   const sql = database();
-  const rows = await sql.query("SELECT id,state,upload_key FROM build_jobs WHERE id=$1 LIMIT 1",[id]);
+  const rows = await sql.query("SELECT id,state,upload_key FROM build_jobs WHERE id=$1 AND user_id=$2 LIMIT 1",[id,userId]);
   if (!rows.length || rows[0].upload_key !== pathname) throw new Error("Uploaded project was not found or has expired.");
   const client = storage();
   const head = await client.send(new HeadObjectCommand({Bucket:process.env.AWS_BUCKET,Key:pathname}));
   if (!Number.isFinite(head.ContentLength) || head.ContentLength < 22 || head.ContentLength > 50*1024*1024) throw new Error("Uploaded project ZIP must be between 22 bytes and 50 MB.");
   const response = await client.send(new GetObjectCommand({Bucket:process.env.AWS_BUCKET,Key:pathname}));
   const zip = await streamToBuffer(response.Body);
-  const job = await startBuild(zip,output,id);
+  const job = await startBuild(zip,output,id,userId);
   try { await client.send(new DeleteObjectCommand({Bucket:process.env.AWS_BUCKET,Key:pathname})); } catch {}
   return job;
 }
-export async function getBuild(id) {
+export async function getBuild(id,userId) {
   if (!/^[a-f0-9]{32}$/.test(id || "")) throw new Error("Invalid job ID.");
   const sql = database();
-  const rows = await sql.query("SELECT id,state,output_kind,sandbox_name,error,artifacts FROM build_jobs WHERE id=$1 LIMIT 1",[id]);
+  const rows = await sql.query("SELECT id,state,output_kind,sandbox_name,error,artifacts FROM build_jobs WHERE id=$1 AND user_id=$2 LIMIT 1",[id,userId]);
   if (!rows.length) throw new Error("Build not found.");
   const job = rows[0];
   if (job.state === "complete") return {jobId:id,state:"complete",artifacts:job.artifacts||{}};
@@ -396,7 +406,7 @@ export async function getBuild(id) {
     const state = JSON.parse(raw.toString("utf8"));
     if (state.state === "failed") {
       const error = String(state.error||"Build failed.").slice(0,12000);
-      await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2",[error,id]);
+      await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2 AND user_id=$3",[error,id,userId]);
       try { await sandbox.stop(); } catch {}
       return {jobId:id,state:"failed",error};
     }
@@ -430,11 +440,11 @@ export async function getBuild(id) {
     }
     if (!Object.keys(artifacts).length) {
       const error = "Build completed but no APK or AAB artifact could be read.";
-      await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2",[error,id]);
+      await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2 AND user_id=$3",[error,id,userId]);
       try { await sandbox.stop(); } catch {}
       return {jobId:id,state:"failed",error};
     }
-    await sql.query("UPDATE build_jobs SET state='complete',artifacts=$1::jsonb,updated_at=now() WHERE id=$2",[JSON.stringify(artifacts),id]);
+    await sql.query("UPDATE build_jobs SET state='complete',artifacts=$1::jsonb,updated_at=now() WHERE id=$2 AND user_id=$3",[JSON.stringify(artifacts),id,userId]);
     try { await sandbox.stop(); } catch {}
     return {jobId:id,state:"complete",artifacts};
   } catch (error) {
@@ -442,10 +452,10 @@ export async function getBuild(id) {
     throw error;
   }
 }
-export async function downloadArtifact(id,file,res,rangeHeader = null) {
+export async function downloadArtifact(id,file,res,rangeHeader = null,userId) {
   if (!/^[a-f0-9]{32}$/.test(id||"") || !["apk","aab"].includes(file)) throw new Error("Invalid artifact request.");
   const sql = database();
-  const rows = await sql.query("SELECT state,artifacts FROM build_jobs WHERE id=$1 LIMIT 1",[id]);
+  const rows = await sql.query("SELECT state,artifacts FROM build_jobs WHERE id=$1 AND user_id=$2 LIMIT 1",[id,userId]);
   if (!rows.length || rows[0].state!=="complete" || !rows[0].artifacts?.[file]) {
     const error = new Error("Artifact not found."); error.statusCode=404; throw error;
   }
@@ -468,13 +478,13 @@ export async function downloadArtifact(id,file,res,rangeHeader = null) {
 }
 
 
-export async function deleteBuild(id) {
+export async function deleteBuild(id,userId) {
   if (!/^[a-f0-9]{32}$/.test(id || "")) {
     const error = new Error("Invalid build ID."); error.statusCode = 400; throw error;
   }
   const sql = database();
   const rows = await sql.query(
-    "SELECT id,state,sandbox_name,upload_key FROM build_jobs WHERE id=$1 LIMIT 1", [id]
+    "SELECT id,state,sandbox_name,upload_key FROM build_jobs WHERE id=$1 AND user_id=$2 LIMIT 1", [id,userId]
   );
   if (!rows.length) {
     const error = new Error("Build not found."); error.statusCode = 404; throw error;
@@ -489,17 +499,17 @@ export async function deleteBuild(id) {
   const client = storage();
   const keys = [job.upload_key, "builds/" + id + "/apk.apk", "builds/" + id + "/aab.aab", "builds/" + id + "/icon.img"].filter(Boolean);
   await Promise.all(keys.map(key => client.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET, Key: key }))));
-  await sql.query("DELETE FROM build_jobs WHERE id=$1", [id]);
+  await sql.query("DELETE FROM build_jobs WHERE id=$1 AND user_id=$2", [id,userId]);
   return { success: true, deleted: id };
 }
 
 
-export async function getAppIcon(id,res) {
+export async function getAppIcon(id,res,userId) {
   if (!/^[a-f0-9]{32}$/.test(id || "")) {
     const error = new Error("Invalid build ID."); error.statusCode = 400; throw error;
   }
   const sql = database();
-  const rows = await sql.query("SELECT state,artifacts FROM build_jobs WHERE id=$1 LIMIT 1",[id]);
+  const rows = await sql.query("SELECT state,artifacts FROM build_jobs WHERE id=$1 AND user_id=$2 LIMIT 1",[id,userId]);
   if (!rows.length || rows[0].state !== "complete" || !rows[0].artifacts?.appIcon) {
     const error = new Error("App icon not found."); error.statusCode = 404; throw error;
   }

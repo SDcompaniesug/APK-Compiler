@@ -1,10 +1,14 @@
 import { neon } from "@neondatabase/serverless";
 import { getBuild, deleteBuild, json } from "./_shared.js";
+import { requireAuth } from "./_auth.js";
 
 export default async function handler(req,res) {
+  let user;
+  try { user = await requireAuth(req); }
+  catch (error) { return json(res,error.statusCode || 401,{error:error.message || "Authentication required."}); }
   if (req.method === "DELETE") {
     try {
-      const result = await deleteBuild(req.query?.id);
+      const result = await deleteBuild(req.query?.id,user.id);
       return json(res,200,result);
     } catch (error) {
       return json(res,error.statusCode || 500,{error:error?.message || "Could not delete build."});
@@ -15,12 +19,12 @@ export default async function handler(req,res) {
     if (!process.env.DATABASE_URL) throw new Error("Neon database is not configured.");
     const sql = neon(process.env.DATABASE_URL);
     const rows = await sql.query(
-      "SELECT id,state,output_kind,error,artifacts,created_at,updated_at FROM build_jobs ORDER BY created_at DESC LIMIT 50"
+      "SELECT id,state,output_kind,error,artifacts,created_at,updated_at FROM build_jobs WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50", [user.id]
     );
     const builds = await Promise.all(rows.map(async row => {
       let current = row;
       if (row.state === "queued" || row.state === "building") {
-        try { current = { ...row, ...(await getBuild(row.id)) }; }
+        try { current = { ...row, ...(await getBuild(row.id,user.id)) }; }
         catch (error) { current = { ...row, state:"building" }; }
       }
       return {

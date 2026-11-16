@@ -1,4 +1,5 @@
 import { getAppIcon } from "./_shared.js";
+import { requireAuth } from "./_auth.js";
 
 export default async function handler(req,res) {
   if (req.method !== "GET") {
@@ -7,7 +8,8 @@ export default async function handler(req,res) {
     return res.end(JSON.stringify({error:"Use GET."}));
   }
   try {
-    await getAppIcon(req.query?.id,res);
+    const user = await requireAuth(req);
+    await getAppIcon(req.query?.id,res,user.id);
   } catch (error) {
     if (!res.headersSent) {
       res.statusCode = error.statusCode || 500;

@@ -1,4 +1,5 @@
 import { json, startBuild, startBuildFromBlob, getBuild } from "./_shared.js";
+import { requireAuth } from "./_auth.js";
 
 export const config = { api: { bodyParser: true } };
 
@@ -69,6 +70,7 @@ export default async function handler(req, res) {
     if (body.method === "tools/list") return json(res, 200, { jsonrpc: "2.0", id, result: { tools } });
 
     if (body.method === "tools/call") {
+      const user = await requireAuth(req);
       const name = body.params?.name;
       const args = body.params?.arguments || {};
       if (name === "apk_compiler_info") {
@@ -86,12 +88,12 @@ export default async function handler(req, res) {
       if (name === "start_android_build") {
         const output = args.output || "apk";
         const job = args.project_blob_path
-          ? await startBuildFromBlob(args.project_blob_path, output)
-          : await startBuild(Buffer.from(args.project_zip_base64 || "", "base64"), output);
+          ? await startBuildFromBlob(args.project_blob_path, output, user.id)
+          : await startBuild(Buffer.from(args.project_zip_base64 || "", "base64"), output, null, user.id);
         return json(res, 200, result(id, job));
       }
       if (name === "get_android_build_status") {
-        const data = await getBuild(args.job_id);
+        const data = await getBuild(args.job_id,user.id);
         return json(res, 200, result(id, data));
       }
       return json(res, 200, {
