@@ -307,7 +307,7 @@ async function streamToBuffer(body, maxBytes = 50 * 1024 * 1024) {
   for await (const chunk of body) {
     const part = Buffer.from(chunk);
     size += part.length;
-    if (size > maxBytes) throw new Error("Uploaded project ZIP exceeds 50 MB.");
+    if (size > maxBytes) throw new Error("Uploaded project ZIP exceeds the administrator-configured upload limit.");
     chunks.push(part);
   }
   return Buffer.concat(chunks, size);
@@ -352,12 +352,12 @@ export async function createUpload(id, filename, userId) {
   return { pathname:key,uploadUrl,validUntil:Date.now()+15*60*1000,maxBytes:Number(platform.max_upload_mb||50)*1024*1024 };
 }
 export async function startBuild(zip, output = "apk", existingId = null, userId) {
-  const platform = await assertPlatformBuildsAllowed(userId,existingId);
+  const platform = await assertPlatformBuildsAllowed(userId);
+  if (!["apk","aab","both","release-apk","release-aab","release-both"].includes(output)) throw new Error("Choose a supported debug or release output.");
+  if (!Buffer.isBuffer(zip) || zip.length < 22 || zip.length > Number(platform.max_upload_mb||50) * 1024 * 1024) throw new Error("Project ZIP exceeds the administrator-configured upload limit.");
   const featureKey = output.startsWith("release-") ? "release_outputs" : "debug_outputs";
   const featureRows = await database().query("SELECT feature_key,enabled FROM public.compiler_feature_flags WHERE feature_key IN ($1,$2)",[featureKey,zip.includes(Buffer.from("pubspec.yaml")) ? "flutter_builds" : "gradle_builds"]);
   if (featureRows.some(row => row.enabled === false)) throw Object.assign(new Error("This build feature is disabled by the administrator."),{statusCode:503});
-  if (!["apk","aab","both","release-apk","release-aab","release-both"].includes(output)) throw new Error("Choose a supported debug or release output.");
-  if (!Buffer.isBuffer(zip) || zip.length < 22 || zip.length > Number(platform.max_upload_mb||50) * 1024 * 1024) throw new Error("Project ZIP exceeds the administrator-configured upload limit.");
   const id = existingId || newId();
   const name = "apk-build-" + id;
   const sql = database();
