@@ -11,13 +11,13 @@ export function json(res, status, data) {
   res.end(JSON.stringify(data));
 }
 export const newId = () => randomUUID().replaceAll("-", "");
-async function assertPlatformBuildsAllowed(userId) {
+async function assertPlatformBuildsAllowed(userId, excludeId = null) {
   const db = database();
   const settings = await db.query("SELECT maintenance_mode,builds_enabled,max_concurrent_builds,max_upload_mb FROM public.compiler_admin_settings WHERE id=1");
   const config = settings[0] || {};
   if (config.maintenance_mode) throw Object.assign(new Error("APK Compiler is under maintenance. Please try again later."), {statusCode:503});
   if (config.builds_enabled === false) throw Object.assign(new Error("New builds are temporarily disabled."), {statusCode:503});
-  const active = await db.query("SELECT count(*)::int count FROM public.build_jobs WHERE user_id=$1 AND state IN ('queued','building')",[userId]);
+  const active = await db.query("SELECT count(*)::int count FROM public.build_jobs WHERE user_id=$1 AND state IN ('queued','building') AND ($2::text IS NULL OR id <> $2)",[userId,excludeId]);
   if (Number(active[0]?.count || 0) >= Number(config.max_concurrent_builds || 3)) throw Object.assign(new Error("You have reached the concurrent build limit."), {statusCode:429});
   return config;
 }
@@ -352,7 +352,7 @@ export async function createUpload(id, filename, userId) {
   return { pathname:key,uploadUrl,validUntil:Date.now()+15*60*1000,maxBytes:Number(platform.max_upload_mb||50)*1024*1024 };
 }
 export async function startBuild(zip, output = "apk", existingId = null, userId) {
-  const platform = await assertPlatformBuildsAllowed(userId);
+  const platform = await assertPlatformBuildsAllowed(userId,existingId);
   const featureKey = output.startsWith("release-") ? "release_outputs" : "debug_outputs";
   const featureRows = await database().query("SELECT feature_key,enabled FROM public.compiler_feature_flags WHERE feature_key IN ($1,$2)",[featureKey,zip.includes(Buffer.from("pubspec.yaml")) ? "flutter_builds" : "gradle_builds"]);
   if (featureRows.some(row => row.enabled === false)) throw Object.assign(new Error("This build feature is disabled by the administrator."),{statusCode:503});
@@ -398,7 +398,7 @@ export async function startBuildFromBlob(pathname, output = "apk", userId) {
   const rows = await sql.query("SELECT id,state,upload_key FROM build_jobs WHERE id=$1 AND user_id=$2 LIMIT 1",[id,userId]);
   if (!rows.length || rows[0].upload_key !== pathname) throw new Error("Uploaded project was not found or has expired.");
   const client = storage();
-  const platform = await assertPlatformBuildsAllowed(userId);
+  const platform = await assertPlatformBuildsAllowed(userId,id);
   const maxBytes = Number(platform.max_upload_mb||50)*1024*1024;
   const head = await client.send(new HeadObjectCommand({Bucket:process.env.AWS_BUCKET,Key:pathname}));
   if (!Number.isFinite(head.ContentLength) || head.ContentLength < 22 || head.ContentLength > maxBytes) throw new Error("Uploaded project ZIP exceeds the administrator-configured upload limit.");
