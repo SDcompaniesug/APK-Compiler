@@ -99,7 +99,7 @@ export default async function handler(req,res){
   }
   if(req.method==="GET"&&action==="backups")return json(res,200,{provider:"Neon",status:"provider-managed",message:"Use Neon Console for verified restore points. Backup inventory API is not configured for this deployment."});
   if(req.method==="GET"&&action==="support"){
-   const rows=await sql().query("SELECT * FROM public.compiler_support_tickets ORDER BY created_at DESC LIMIT 100");return json(res,200,{tickets:rows});
+   const rows=await sql.query("SELECT * FROM public.compiler_support_tickets ORDER BY created_at DESC LIMIT 100");return json(res,200,{tickets:rows});
   }
   return json(res,405,{error:"Unsupported admin action or method."});
  }catch(e){return json(res,e.statusCode||500,{error:e.message||"Admin request failed."});}
