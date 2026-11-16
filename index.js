@@ -6,6 +6,7 @@ import status from "./api/status.js";
 import download from "./api/download.js";
 import uploadUrl from "./api/upload-url.js";
 import builds from "./api/builds.js";
+import cancelBuild from "./api/cancel.js";
 import ready from "./api/ready.js";
 import mcp from "./api/mcp.js";
 import authLogin from "./api/auth/login.js";
@@ -39,6 +40,7 @@ export default async function handler(req, res) {
     if (url.pathname === "/api/upload-url") { await parseJson(req); return await uploadUrl(req, res); }
     if (url.pathname === "/api/status") return await status(req, res);
     if (url.pathname === "/api/builds") return await builds(req, res);
+    if (url.pathname === "/api/cancel") { await parseJson(req); return await cancelBuild(req, res); }
     if (url.pathname === "/api/ready") return await ready(req, res);
     if (url.pathname === "/api/download") return await download(req, res);
     if (url.pathname === "/api/mcp") {
