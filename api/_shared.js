@@ -328,10 +328,15 @@ export async function createUpload(id, filename, userId) {
     Bucket: process.env.AWS_BUCKET, Key: key, ContentType: "application/zip"
   }), { expiresIn: 900 });
   const sql = database();
-  await sql.query(
-    "INSERT INTO build_jobs (id,user_id,state,output_kind,upload_key,created_at,updated_at,expires_at) VALUES ($1,$2,'queued','apk',$3,now(),now(),now()+interval '24 hours') ON CONFLICT (id) DO UPDATE SET upload_key=EXCLUDED.upload_key,updated_at=now() WHERE build_jobs.user_id=EXCLUDED.user_id",
+  const inserted = await sql.query(
+    "INSERT INTO build_jobs (id,user_id,state,output_kind,upload_key,created_at,updated_at,expires_at) VALUES ($1,$2,'queued','apk',$3,now(),now(),now()+interval '24 hours') ON CONFLICT (id) DO UPDATE SET upload_key=EXCLUDED.upload_key,updated_at=now() WHERE build_jobs.user_id=EXCLUDED.user_id RETURNING id",
     [id,userId,key]
   );
+  if (!inserted.length) {
+    const error = new Error("Could not reserve this upload for your account.");
+    error.statusCode = 409;
+    throw error;
+  }
   return { pathname:key,uploadUrl,validUntil:Date.now()+15*60*1000,maxBytes:50*1024*1024 };
 }
 export async function startBuild(zip, output = "apk", existingId = null, userId) {
@@ -353,10 +358,15 @@ export async function startBuild(zip, output = "apk", existingId = null, userId)
       {path:"/vercel/sandbox/run-build.sh",content:Buffer.from(buildScript),mode:0o755}
     ]);
     await sandbox.runCommand({cmd:"bash",args:["/vercel/sandbox/run-build.sh"],detached:true,env:{OUTPUT_KIND:output},timeoutMs:45*60*1000});
-    await sql.query(
+    const claimed = await sql.query(
       "INSERT INTO build_jobs (id,user_id,state,output_kind,sandbox_name,created_at,updated_at,expires_at) VALUES ($1,$2,'building',$3,$4,now(),now(),now()+interval '7 days') ON CONFLICT (id) DO UPDATE SET state='building',output_kind=EXCLUDED.output_kind,sandbox_name=EXCLUDED.sandbox_name,updated_at=now(),error=NULL WHERE build_jobs.user_id=EXCLUDED.user_id RETURNING id",
       [id,userId,output,name]
     );
+    if (!claimed.length) {
+      const error = new Error("Build job does not belong to this account.");
+      error.statusCode = 404;
+      throw error;
+    }
     return {jobId:id,state:"building",statusUrl:"/api/status?id="+id};
   } catch (error) {
     try { if (sandbox) await sandbox.stop(); } catch {}
