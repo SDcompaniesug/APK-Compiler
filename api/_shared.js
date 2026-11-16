@@ -11,6 +11,17 @@ export function json(res, status, data) {
   res.end(JSON.stringify(data));
 }
 export const newId = () => randomUUID().replaceAll("-", "");
+async function assertPlatformBuildsAllowed(userId, excludeId = null) {
+  const db = database();
+  const settings = await db.query("SELECT maintenance_mode,builds_enabled,max_concurrent_builds,max_upload_mb FROM public.compiler_admin_settings WHERE id=1");
+  const config = settings[0] || {};
+  if (config.maintenance_mode) throw Object.assign(new Error("APK Compiler is under maintenance. Please try again later."), {statusCode:503});
+  if (config.builds_enabled === false) throw Object.assign(new Error("New builds are temporarily disabled."), {statusCode:503});
+  const active = await db.query("SELECT count(*)::int count FROM public.build_jobs WHERE user_id=$1 AND state IN ('queued','building') AND ($2::text IS NULL OR id <> $2)",[userId,excludeId]);
+  if (Number(active[0]?.count || 0) >= Number(config.max_concurrent_builds || 3)) throw Object.assign(new Error("You have reached the concurrent build limit."), {statusCode:429});
+  return config;
+}
+
 
 const buildScript = String.raw`#!/usr/bin/env bash
 set -Eeuo pipefail
@@ -320,6 +331,7 @@ async function ensureBucketCors(client) {
   }));
 }
 export async function createUpload(id, filename, userId) {
+  const platform = await assertPlatformBuildsAllowed(userId);
   if (!/\.zip$/i.test(String(filename || ""))) throw new Error("Choose a .zip project file.");
   const key = "uploads/" + id + ".zip";
   const client = storage();
@@ -337,29 +349,34 @@ export async function createUpload(id, filename, userId) {
     error.statusCode = 409;
     throw error;
   }
-  return { pathname:key,uploadUrl,validUntil:Date.now()+15*60*1000,maxBytes:50*1024*1024 };
+  return { pathname:key,uploadUrl,validUntil:Date.now()+15*60*1000,maxBytes:Number(platform.max_upload_mb||50)*1024*1024 };
 }
 export async function startBuild(zip, output = "apk", existingId = null, userId) {
+  const platform = await assertPlatformBuildsAllowed(userId,existingId);
+  const featureKey = output.startsWith("release-") ? "release_outputs" : "debug_outputs";
+  const featureRows = await database().query("SELECT feature_key,enabled FROM public.compiler_feature_flags WHERE feature_key IN ($1,$2)",[featureKey,zip.includes(Buffer.from("pubspec.yaml")) ? "flutter_builds" : "gradle_builds"]);
+  if (featureRows.some(row => row.enabled === false)) throw Object.assign(new Error("This build feature is disabled by the administrator."),{statusCode:503});
   if (!["apk","aab","both","release-apk","release-aab","release-both"].includes(output)) throw new Error("Choose a supported debug or release output.");
-  if (!Buffer.isBuffer(zip) || zip.length < 22 || zip.length > 50 * 1024 * 1024) throw new Error("Project ZIP must be between 22 bytes and 50 MB.");
+  if (!Buffer.isBuffer(zip) || zip.length < 22 || zip.length > Number(platform.max_upload_mb||50) * 1024 * 1024) throw new Error("Project ZIP exceeds the administrator-configured upload limit.");
   const id = existingId || newId();
   const name = "apk-build-" + id;
   const sql = database();
   let sandbox;
   try {
+    const timeoutMs = Math.max(5,Math.min(180,Number(platform.build_timeout_minutes||45)))*60*1000;
     sandbox = await Sandbox.create({
       name,source:{type:"snapshot",snapshotId:process.env.ANDROID_BUILD_SNAPSHOT_ID},
       runtime:"node24",region:"iad1",resources:{vcpus:4,memory:8192},
-      timeout:45*60*1000,persistent:false,networkPolicy:"allow-all"
+      timeout:timeoutMs,persistent:false,networkPolicy:"allow-all"
     });
     await sandbox.writeFiles([
       {path:"/vercel/sandbox/input/project.zip",content:zip},
       {path:"/vercel/sandbox/status.json",content:Buffer.from(JSON.stringify({state:"queued"}))},
       {path:"/vercel/sandbox/run-build.sh",content:Buffer.from(buildScript),mode:0o755}
     ]);
-    await sandbox.runCommand({cmd:"bash",args:["/vercel/sandbox/run-build.sh"],detached:true,env:{OUTPUT_KIND:output},timeoutMs:45*60*1000});
+    await sandbox.runCommand({cmd:"bash",args:["/vercel/sandbox/run-build.sh"],detached:true,env:{OUTPUT_KIND:output},timeoutMs});
     const claimed = await sql.query(
-      "INSERT INTO build_jobs (id,user_id,state,output_kind,sandbox_name,created_at,updated_at,expires_at) VALUES ($1,$2,'building',$3,$4,now(),now(),now()+interval '7 days') ON CONFLICT (id) DO UPDATE SET state='building',output_kind=EXCLUDED.output_kind,sandbox_name=EXCLUDED.sandbox_name,updated_at=now(),error=NULL WHERE build_jobs.user_id=EXCLUDED.user_id RETURNING id",
+      "INSERT INTO build_jobs (id,user_id,state,output_kind,sandbox_name,created_at,updated_at,expires_at) VALUES ($1,$2,'building',$3,$4,now(),now(),now()+interval '7 days') ON CONFLICT (id) DO UPDATE SET state='building',output_kind=EXCLUDED.output_kind,sandbox_name=EXCLUDED.sandbox_name,updated_at=now(),error=NULL WHERE build_jobs.user_id=EXCLUDED.user_id AND build_jobs.state <> 'cancelled' RETURNING id",
       [id,userId,output,name]
     );
     if (!claimed.length) {
@@ -370,7 +387,7 @@ export async function startBuild(zip, output = "apk", existingId = null, userId)
     return {jobId:id,state:"building",statusUrl:"/api/status?id="+id};
   } catch (error) {
     try { if (sandbox) await sandbox.stop(); } catch {}
-    await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2 AND user_id=$3",[String(error?.message||error).slice(0,12000),id,userId]);
+    await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2 AND user_id=$3 AND state <> 'cancelled'",[String(error?.message||error).slice(0,12000),id,userId]);
     throw error;
   }
 }
@@ -381,10 +398,12 @@ export async function startBuildFromBlob(pathname, output = "apk", userId) {
   const rows = await sql.query("SELECT id,state,upload_key FROM build_jobs WHERE id=$1 AND user_id=$2 LIMIT 1",[id,userId]);
   if (!rows.length || rows[0].upload_key !== pathname) throw new Error("Uploaded project was not found or has expired.");
   const client = storage();
+  const platform = await assertPlatformBuildsAllowed(userId,id);
+  const maxBytes = Number(platform.max_upload_mb||50)*1024*1024;
   const head = await client.send(new HeadObjectCommand({Bucket:process.env.AWS_BUCKET,Key:pathname}));
-  if (!Number.isFinite(head.ContentLength) || head.ContentLength < 22 || head.ContentLength > 50*1024*1024) throw new Error("Uploaded project ZIP must be between 22 bytes and 50 MB.");
+  if (!Number.isFinite(head.ContentLength) || head.ContentLength < 22 || head.ContentLength > maxBytes) throw new Error("Uploaded project ZIP exceeds the administrator-configured upload limit.");
   const response = await client.send(new GetObjectCommand({Bucket:process.env.AWS_BUCKET,Key:pathname}));
-  const zip = await streamToBuffer(response.Body);
+  const zip = await streamToBuffer(response.Body,maxBytes);
   const job = await startBuild(zip,output,id,userId);
   try { await client.send(new DeleteObjectCommand({Bucket:process.env.AWS_BUCKET,Key:pathname})); } catch {}
   return job;
@@ -396,6 +415,7 @@ export async function getBuild(id,userId) {
   if (!rows.length) throw new Error("Build not found.");
   const job = rows[0];
   if (job.state === "complete") return {jobId:id,state:"complete",artifacts:job.artifacts||{}};
+  if (job.state === "cancelled") return {jobId:id,state:"cancelled",error:job.error||"Build cancelled."};
   if (job.state === "failed") return {jobId:id,state:"failed",error:job.error||"Build failed."};
   if (!job.sandbox_name) return {jobId:id,state:job.state||"queued"};
   let sandbox;
@@ -406,7 +426,7 @@ export async function getBuild(id,userId) {
     const state = JSON.parse(raw.toString("utf8"));
     if (state.state === "failed") {
       const error = String(state.error||"Build failed.").slice(0,12000);
-      await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2 AND user_id=$3",[error,id,userId]);
+      await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2 AND user_id=$3 AND state <> 'cancelled'",[error,id,userId]);
       try { await sandbox.stop(); } catch {}
       return {jobId:id,state:"failed",error};
     }
@@ -440,11 +460,11 @@ export async function getBuild(id,userId) {
     }
     if (!Object.keys(artifacts).length) {
       const error = "Build completed but no APK or AAB artifact could be read.";
-      await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2 AND user_id=$3",[error,id,userId]);
+      await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2 AND user_id=$3 AND state <> 'cancelled'",[error,id,userId]);
       try { await sandbox.stop(); } catch {}
       return {jobId:id,state:"failed",error};
     }
-    await sql.query("UPDATE build_jobs SET state='complete',artifacts=$1::jsonb,updated_at=now() WHERE id=$2 AND user_id=$3",[JSON.stringify(artifacts),id,userId]);
+    await sql.query("UPDATE build_jobs SET state='complete',artifacts=$1::jsonb,updated_at=now() WHERE id=$2 AND user_id=$3 AND state <> 'cancelled'",[JSON.stringify(artifacts),id,userId]);
     try { await sandbox.stop(); } catch {}
     return {jobId:id,state:"complete",artifacts};
   } catch (error) {
@@ -455,6 +475,8 @@ export async function getBuild(id,userId) {
 export async function downloadArtifact(id,file,res,rangeHeader = null,userId) {
   if (!/^[a-f0-9]{32}$/.test(id||"") || !["apk","aab"].includes(file)) throw new Error("Invalid artifact request.");
   const sql = database();
+  const flags = await sql.query("SELECT enabled FROM public.compiler_feature_flags WHERE feature_key='artifact_downloads' LIMIT 1");
+  if (flags[0]?.enabled === false) throw Object.assign(new Error("Artifact downloads are disabled by the administrator."),{statusCode:503});
   const rows = await sql.query("SELECT state,artifacts FROM build_jobs WHERE id=$1 AND user_id=$2 LIMIT 1",[id,userId]);
   if (!rows.length || rows[0].state!=="complete" || !rows[0].artifacts?.[file]) {
     const error = new Error("Artifact not found."); error.statusCode=404; throw error;

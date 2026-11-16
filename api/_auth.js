@@ -62,6 +62,8 @@ export async function registerAccount(name, email, password) {
   if (cleanName.length < 2 || cleanName.length > 80) throw Object.assign(new Error("Enter a name between 2 and 80 characters."), { statusCode: 400 });
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail) || cleanEmail.length > 254) throw Object.assign(new Error("Enter a valid email address."), { statusCode: 400 });
   if (pass.length < 8 || pass.length > 128) throw Object.assign(new Error("Password must be at least 8 characters."), { statusCode: 400 });
+  const platform = await db().query("SELECT registration_enabled,maintenance_mode FROM public.compiler_admin_settings WHERE id=1");
+  if (platform[0]?.maintenance_mode || platform[0]?.registration_enabled === false) throw Object.assign(new Error("New registrations are temporarily disabled."), { statusCode: 503 });
   const salt = randomBytes(16);
   const derived = await scrypt(pass, salt, 64, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
   const passwordHash = "scrypt$" + salt.toString("base64url") + "$" + Buffer.from(derived).toString("base64url");
@@ -80,7 +82,7 @@ export async function registerAccount(name, email, password) {
 export async function loginAccount(email, password) {
   const cleanEmail = String(email || "").trim().toLowerCase();
   const rows = await db().query(
-    "SELECT id,email,name,password_hash FROM public.app_users WHERE email=$1 LIMIT 1",
+    "SELECT id,email,name,password_hash,status FROM public.app_users WHERE email=$1 LIMIT 1",
     [cleanEmail]
   );
   const row = rows[0];
@@ -97,6 +99,7 @@ export async function loginAccount(email, password) {
     }
   }
   if (!valid) throw Object.assign(new Error("Incorrect email or password."), { statusCode: 401 });
+  if (row.status && row.status !== "active") throw Object.assign(new Error("This account is suspended or banned."), { statusCode: 403 });
   return issueSession({ id: row.id, email: row.email, name: row.name });
 }
 export async function rotateRefreshToken(refreshToken) {
@@ -130,9 +133,10 @@ export async function requireAuth(req) {
   const claims = match ? verifyAccess(match[1]) : null;
   if (!claims) throw Object.assign(new Error("Authentication required. Please sign in."), { statusCode: 401 });
   const rows = await db().query(
-    "SELECT s.id,u.id AS user_id,u.email,u.name FROM public.auth_sessions s JOIN public.app_users u ON u.id=s.user_id WHERE s.id=$1 AND s.user_id=$2 AND s.revoked_at IS NULL AND s.expires_at>now() LIMIT 1",
+    "SELECT s.id,u.id AS user_id,u.email,u.name,u.status FROM public.auth_sessions s JOIN public.app_users u ON u.id=s.user_id WHERE s.id=$1 AND s.user_id=$2 AND s.revoked_at IS NULL AND s.expires_at>now() LIMIT 1",
     [claims.sid, claims.sub]
   );
   if (!rows.length) throw Object.assign(new Error("Your session is no longer valid. Please sign in again."), { statusCode: 401 });
+  if (rows[0].status && rows[0].status !== "active") throw Object.assign(new Error("This account is suspended or banned."), { statusCode: 403 });
   return { id: rows[0].user_id, email: rows[0].email, name: rows[0].name, sessionId: rows[0].id };
 }
