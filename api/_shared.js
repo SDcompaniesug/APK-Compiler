@@ -330,6 +330,7 @@ async function ensureBucketCors(client) {
   }));
 }
 export async function createUpload(id, filename, userId) {
+  await assertPlatformBuildsAllowed(userId);
   if (!/\.zip$/i.test(String(filename || ""))) throw new Error("Choose a .zip project file.");
   const key = "uploads/" + id + ".zip";
   const client = storage();
