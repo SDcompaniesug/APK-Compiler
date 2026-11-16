@@ -11,6 +11,16 @@ export function json(res, status, data) {
   res.end(JSON.stringify(data));
 }
 export const newId = () => randomUUID().replaceAll("-", "");
+async function assertPlatformBuildsAllowed(userId) {
+  const db = database();
+  const settings = await db.query("SELECT maintenance_mode,builds_enabled,max_concurrent_builds,max_upload_mb FROM public.compiler_admin_settings WHERE id=1");
+  const config = settings[0] || {};
+  if (config.maintenance_mode) throw Object.assign(new Error("APK Compiler is under maintenance. Please try again later."), {statusCode:503});
+  if (config.builds_enabled === false) throw Object.assign(new Error("New builds are temporarily disabled."), {statusCode:503});
+  const active = await db.query("SELECT count(*)::int count FROM public.build_jobs WHERE user_id=$1 AND state IN ('queued','building')",[userId]);
+  if (Number(active[0]?.count || 0) >= Number(config.max_concurrent_builds || 3)) throw Object.assign(new Error("You have reached the concurrent build limit."), {statusCode:429});
+}
+
 
 const buildScript = String.raw`#!/usr/bin/env bash
 set -Eeuo pipefail
@@ -340,6 +350,7 @@ export async function createUpload(id, filename, userId) {
   return { pathname:key,uploadUrl,validUntil:Date.now()+15*60*1000,maxBytes:50*1024*1024 };
 }
 export async function startBuild(zip, output = "apk", existingId = null, userId) {
+  await assertPlatformBuildsAllowed(userId);
   if (!["apk","aab","both","release-apk","release-aab","release-both"].includes(output)) throw new Error("Choose a supported debug or release output.");
   if (!Buffer.isBuffer(zip) || zip.length < 22 || zip.length > 50 * 1024 * 1024) throw new Error("Project ZIP must be between 22 bytes and 50 MB.");
   const id = existingId || newId();
@@ -396,6 +407,7 @@ export async function getBuild(id,userId) {
   if (!rows.length) throw new Error("Build not found.");
   const job = rows[0];
   if (job.state === "complete") return {jobId:id,state:"complete",artifacts:job.artifacts||{}};
+  if (job.state === "cancelled") return {jobId:id,state:"cancelled",error:job.error||"Build cancelled."};
   if (job.state === "failed") return {jobId:id,state:"failed",error:job.error||"Build failed."};
   if (!job.sandbox_name) return {jobId:id,state:job.state||"queued"};
   let sandbox;
