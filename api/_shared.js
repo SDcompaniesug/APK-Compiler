@@ -354,8 +354,8 @@ export async function createUpload(id, filename, userId) {
 export async function startBuild(zip, output = "apk", existingId = null, userId) {
   const platform = await assertPlatformBuildsAllowed(userId);
   const featureKey = output.startsWith("release-") ? "release_outputs" : "debug_outputs";
-  const featureRows = await database().query("SELECT enabled FROM public.compiler_feature_flags WHERE feature_key=$1 LIMIT 1",[featureKey]);
-  if (featureRows[0]?.enabled === false) throw Object.assign(new Error("This build output type is disabled by the administrator."),{statusCode:503});
+  const featureRows = await database().query("SELECT feature_key,enabled FROM public.compiler_feature_flags WHERE feature_key IN ($1,$2)",[featureKey,zip.includes(Buffer.from("pubspec.yaml")) ? "flutter_builds" : "gradle_builds"]);
+  if (featureRows.some(row => row.enabled === false)) throw Object.assign(new Error("This build feature is disabled by the administrator."),{statusCode:503});
   if (!["apk","aab","both","release-apk","release-aab","release-both"].includes(output)) throw new Error("Choose a supported debug or release output.");
   if (!Buffer.isBuffer(zip) || zip.length < 22 || zip.length > Number(platform.max_upload_mb||50) * 1024 * 1024) throw new Error("Project ZIP exceeds the administrator-configured upload limit.");
   const id = existingId || newId();
@@ -426,7 +426,7 @@ export async function getBuild(id,userId) {
     const state = JSON.parse(raw.toString("utf8"));
     if (state.state === "failed") {
       const error = String(state.error||"Build failed.").slice(0,12000);
-      await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2 AND user_id=$3",[error,id,userId]);
+      await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2 AND user_id=$3 AND state <> 'cancelled'",[error,id,userId]);
       try { await sandbox.stop(); } catch {}
       return {jobId:id,state:"failed",error};
     }
@@ -460,11 +460,11 @@ export async function getBuild(id,userId) {
     }
     if (!Object.keys(artifacts).length) {
       const error = "Build completed but no APK or AAB artifact could be read.";
-      await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2 AND user_id=$3",[error,id,userId]);
+      await sql.query("UPDATE build_jobs SET state='failed',error=$1,updated_at=now() WHERE id=$2 AND user_id=$3 AND state <> 'cancelled'",[error,id,userId]);
       try { await sandbox.stop(); } catch {}
       return {jobId:id,state:"failed",error};
     }
-    await sql.query("UPDATE build_jobs SET state='complete',artifacts=$1::jsonb,updated_at=now() WHERE id=$2 AND user_id=$3",[JSON.stringify(artifacts),id,userId]);
+    await sql.query("UPDATE build_jobs SET state='complete',artifacts=$1::jsonb,updated_at=now() WHERE id=$2 AND user_id=$3 AND state <> 'cancelled'",[JSON.stringify(artifacts),id,userId]);
     try { await sandbox.stop(); } catch {}
     return {jobId:id,state:"complete",artifacts};
   } catch (error) {
@@ -475,6 +475,8 @@ export async function getBuild(id,userId) {
 export async function downloadArtifact(id,file,res,rangeHeader = null,userId) {
   if (!/^[a-f0-9]{32}$/.test(id||"") || !["apk","aab"].includes(file)) throw new Error("Invalid artifact request.");
   const sql = database();
+  const flags = await sql.query("SELECT enabled FROM public.compiler_feature_flags WHERE feature_key='artifact_downloads' LIMIT 1");
+  if (flags[0]?.enabled === false) throw Object.assign(new Error("Artifact downloads are disabled by the administrator."),{statusCode:503});
   const rows = await sql.query("SELECT state,artifacts FROM build_jobs WHERE id=$1 AND user_id=$2 LIMIT 1",[id,userId]);
   if (!rows.length || rows[0].state!=="complete" || !rows[0].artifacts?.[file]) {
     const error = new Error("Artifact not found."); error.statusCode=404; throw error;
