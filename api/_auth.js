@@ -62,6 +62,8 @@ export async function registerAccount(name, email, password) {
   if (cleanName.length < 2 || cleanName.length > 80) throw Object.assign(new Error("Enter a name between 2 and 80 characters."), { statusCode: 400 });
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail) || cleanEmail.length > 254) throw Object.assign(new Error("Enter a valid email address."), { statusCode: 400 });
   if (pass.length < 8 || pass.length > 128) throw Object.assign(new Error("Password must be at least 8 characters."), { statusCode: 400 });
+  const platform = await db().query("SELECT registration_enabled,maintenance_mode FROM public.compiler_admin_settings WHERE id=1");
+  if (platform[0]?.maintenance_mode || platform[0]?.registration_enabled === false) throw Object.assign(new Error("New registrations are temporarily disabled."), { statusCode: 503 });
   const salt = randomBytes(16);
   const derived = await scrypt(pass, salt, 64, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
   const passwordHash = "scrypt$" + salt.toString("base64url") + "$" + Buffer.from(derived).toString("base64url");
