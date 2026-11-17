@@ -50,7 +50,19 @@ if [ -z "$SDK" ]; then
 fi
 if [ -z "$SDK" ]; then echo '{"state":"failed","error":"Android SDK is missing from the build image."}' > "$BASE/status.json"; exit 2; fi
 export ANDROID_HOME="$SDK" ANDROID_SDK_ROOT="$SDK"
-export JAVA_HOME=$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")
+JAVA_BIN="$(command -v java || true)"
+if [ -z "$JAVA_BIN" ]; then
+ echo '{"state":"failed","error":"Java 17 is missing from the Railway worker image PATH."}' > "$BASE/status.json"
+ exit 2
+fi
+JAVA_REAL="$(readlink -f "$JAVA_BIN")"
+JAVA_HOME="$(dirname "$(dirname "$JAVA_REAL")")"
+if [ ! -x "$JAVA_HOME/bin/java" ]; then JAVA_HOME=/opt/java/openjdk; fi
+if [ ! -x "$JAVA_HOME/bin/java" ]; then
+ echo '{"state":"failed","error":"Could not locate a valid Java installation in the Railway worker image."}' > "$BASE/status.json"
+ exit 2
+fi
+export JAVA_HOME
 export PATH="$JAVA_HOME/bin:$SDK/platform-tools:$PATH"
 echo '{"state":"building"}' > "$BASE/status.json"
 RC=0
