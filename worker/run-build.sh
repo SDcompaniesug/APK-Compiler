@@ -144,11 +144,11 @@ PY
  else
   mkdir -p $BASE/tmp/gradle-8.9
   if [ ! -x $BASE/tmp/gradle-8.9/bin/gradle ]; then
-   curl -fsSL https://services.gradle.org/distributions/gradle-8.9-bin.zip -o $BASE$BASE/tmp/gradle-8.9.zip >> "$BASE/build.log" 2>&1 || {
+   curl -fsSL https://services.gradle.org/distributions/gradle-8.9-bin.zip -o "$BASE/tmp/gradle-8.9.zip" >> "$BASE/build.log" 2>&1 || {
     echo '{"state":"failed","error":"Could not download Gradle 8.9 and the project ZIP does not include gradlew."}' > "$BASE/status.json"
     exit 2
    }
-   unzip -q -o $BASE$BASE/tmp/gradle-8.9.zip -d /tmp >> "$BASE/build.log" 2>&1 || {
+   unzip -q -o "$BASE/tmp/gradle-8.9.zip" -d "$BASE/tmp" >> "$BASE/build.log" 2>&1 || {
     echo '{"state":"failed","error":"Could not extract Gradle 8.9."}' > "$BASE/status.json"
     exit 2
    }
@@ -187,12 +187,12 @@ PY
    GRADLE_HOME="$BASE/tmp/gradle-$REQUIRED_GRADLE"
    mkdir -p "$GRADLE_HOME"
    if [ ! -x "$GRADLE_HOME/bin/gradle" ]; then
-    curl -fsSL "https://services.gradle.org/distributions/gradle-$REQUIRED_GRADLE-bin.zip" -o "$BASE$BASE/tmp/gradle-$REQUIRED_GRADLE.zip" >> "$BASE/build.log" 2>&1 || {
+    curl -fsSL "https://services.gradle.org/distributions/gradle-$REQUIRED_GRADLE-bin.zip" -o "$BASE/tmp/gradle-$REQUIRED_GRADLE.zip" >> "$BASE/build.log" 2>&1 || {
      echo "Could not download required Gradle $REQUIRED_GRADLE." >> "$BASE/build.log"
      RC=1
     }
     if [ "$RC" -eq 0 ]; then
-     unzip -q -o "$BASE$BASE/tmp/gradle-$REQUIRED_GRADLE.zip" -d /tmp >> "$BASE/build.log" 2>&1 || RC=$?
+     unzip -q -o "$BASE/tmp/gradle-$REQUIRED_GRADLE.zip" -d "$BASE/tmp" >> "$BASE/build.log" 2>&1 || RC=$?
     fi
    fi
    if [ "$RC" -eq 0 ] && [ -x "$GRADLE_HOME/bin/gradle" ]; then
