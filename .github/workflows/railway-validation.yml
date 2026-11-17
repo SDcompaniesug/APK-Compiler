@@ -1,0 +1,23 @@
+name: Railway migration validation
+on:
+  push:
+    branches: [railway-migration]
+  pull_request:
+    branches: [main, railway-migration]
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+      - name: Check JavaScript syntax
+        run: |
+          find . -path ./node_modules -prune -o -name '*.js' -type f -print0 | while IFS= read -r -d '' file; do
+            node --check "$file"
+          done
+      - name: Check Android build runner syntax
+        run: bash -n worker/run-build.sh
