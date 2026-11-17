@@ -74,9 +74,8 @@ function renderAuthMode(){
  document.getElementById('authPassword').autocomplete=authRegister?'new-password':'current-password';
  document.getElementById('authSubmit').textContent=authRegister?'Create account':'Sign in';
  document.getElementById('authToggle').textContent=authRegister?'I already have an account':'Create an account';
- document.getElementById('authError').textContent='';
 }
-document.getElementById('authToggle').addEventListener('click',()=>{authRegister=!authRegister;renderAuthMode()});
+document.getElementById('authToggle').addEventListener('click',()=>{authRegister=!authRegister;document.getElementById('authError').textContent='';renderAuthMode()});
 document.getElementById('authForm').addEventListener('submit',async e=>{
  e.preventDefault();const button=document.getElementById('authSubmit'),error=document.getElementById('authError');
  button.disabled=true;button.textContent='Please wait…';error.textContent='';
