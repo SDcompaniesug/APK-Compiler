@@ -1,7 +1,7 @@
 import { neon } from "@neondatabase/serverless";
 import { Sandbox } from "@vercel/sandbox";
-import { json } from "./_shared.js";
-import { requireAuth } from "./_auth.js";
+import { json } from "../lib/_shared.js";
+import { requireAuth } from "../lib/_auth.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return json(res, 405, { error: "Use POST." });
