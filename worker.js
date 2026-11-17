@@ -102,7 +102,7 @@ async function processJob(job){
 }
 async function claimJob(){
   const rows=await sql.query(
-    "UPDATE build_jobs SET state='building',sandbox_name=$1,updated_at=now(),error=NULL WHERE id=(SELECT id FROM build_jobs WHERE state='queued' AND upload_key IS NOT NULL AND (expires_at IS NULL OR expires_at>now()) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,user_id,output_kind,upload_key",
+    "UPDATE build_jobs SET state='building',sandbox_name=$1,updated_at=now(),error=NULL WHERE id=(SELECT id FROM build_jobs WHERE state='queued' AND upload_key IS NOT NULL AND (expires_at IS NULL OR expires_at>now()) ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id,user_id,output_kind,upload_key",
     [workerId]
   );
   return rows[0]||null;
