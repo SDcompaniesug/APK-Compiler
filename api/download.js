@@ -1,5 +1,5 @@
-import { downloadArtifact, json } from "./_shared.js";
-import { requireAuth } from "./_auth.js";
+import { downloadArtifact, json } from "../lib/_shared.js";
+import { requireAuth } from "../lib/_auth.js";
 
 export default async function handler(req,res) {
   if (req.method !== "GET") return json(res,405,{error:"Use GET."});
