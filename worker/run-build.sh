@@ -103,7 +103,7 @@ python3 - "$ROOT" "$HOME/.gradle/gradle.properties" <<'PYMEM'
 import os,sys
 root,global_props=sys.argv[1:]
 settings={
- "org.gradle.jvmargs":"-Xmx768m -XX:MaxMetaspaceSize=384m -Dfile.encoding=UTF-8",
+ "org.gradle.jvmargs":"-Xmx512m -XX:MaxMetaspaceSize=256m -XX:ReservedCodeCacheSize=64m -Dfile.encoding=UTF-8",
  "org.gradle.workers.max":"1",
  "org.gradle.parallel":"false",
  "org.gradle.caching":"false",
