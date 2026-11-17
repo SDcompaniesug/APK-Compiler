@@ -26,7 +26,7 @@ async function bufferBody(body,max=50*1024*1024){
 async function deleteObject(key){try{await s3.send(new DeleteObjectCommand({Bucket:bucket,Key:key}));}catch{}}
 async function runCommand(outputKind){
   const env={
-    PATH:"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/android-sdk/platform-tools:/opt/android-sdk/cmdline-tools/latest/bin:/opt/flutter/bin",
+    PATH:"/opt/java/openjdk/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/android-sdk/platform-tools:/opt/android-sdk/cmdline-tools/latest/bin:/opt/flutter/bin",
     HOME:path.join(base,"home"),
     TMPDIR:path.join(base,"tmp"),
     TMP:path.join(base,"tmp"),
@@ -34,7 +34,7 @@ async function runCommand(outputKind){
     GRADLE_USER_HOME:path.join(base,"home",".gradle"),
     ANDROID_USER_HOME:path.join(base,"home",".android"),
     PUB_CACHE:path.join(base,"home",".pub-cache"),
-    JAVA_HOME:process.env.JAVA_HOME||"/opt/java/openjdk",
+    JAVA_HOME:"/opt/java/openjdk",
     ANDROID_HOME:"/opt/android-sdk",
     ANDROID_SDK_ROOT:"/opt/android-sdk",
     OUTPUT_KIND:outputKind,
