@@ -96,20 +96,21 @@ async function processJob(job){
     const message=String(error?.message||error).slice(-12000);
     console.error("Build failed",id,message);
     await sql.query("UPDATE build_jobs SET state='failed',error=$1,sandbox_name=NULL,updated_at=now() WHERE id=$2 AND state='building'",[message,id]).catch(()=>{});
+    await deleteObject(uploadKey);
   }finally{
     await rm(base,{recursive:true,force:true}).catch(()=>{});
   }
 }
 async function claimJob(){
   const rows=await sql.query(
-    "UPDATE build_jobs SET state='building',sandbox_name=$1,updated_at=now(),error=NULL WHERE id=(SELECT id FROM build_jobs WHERE state='queued' AND upload_key IS NOT NULL AND (expires_at IS NULL OR expires_at>now()) ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id,user_id,output_kind,upload_key",
+    "UPDATE build_jobs SET state='building',sandbox_name=$1,updated_at=now(),error=NULL WHERE id=(SELECT id FROM build_jobs WHERE state='queued' AND sandbox_name='railway-pending' AND upload_key IS NOT NULL AND (expires_at IS NULL OR expires_at>now()) ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id,user_id,output_kind,upload_key",
     [workerId]
   );
   return rows[0]||null;
 }
 async function main(){
   console.log("APK Compiler worker online",workerId);
-  await sql.query("UPDATE build_jobs SET state='queued',sandbox_name=NULL,updated_at=now() WHERE state='building' AND updated_at<now()-interval '70 minutes'").catch(()=>{});
+  await sql.query("UPDATE build_jobs SET state='queued',sandbox_name='railway-pending',updated_at=now() WHERE state='building' AND updated_at<now()-interval '70 minutes'").catch(()=>{});
   for(;;){
     try{
       const job=await claimJob();
