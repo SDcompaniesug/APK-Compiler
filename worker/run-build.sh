@@ -50,20 +50,52 @@ if [ -z "$SDK" ]; then
 fi
 if [ -z "$SDK" ]; then echo '{"state":"failed","error":"Android SDK is missing from the build image."}' > "$BASE/status.json"; exit 2; fi
 export ANDROID_HOME="$SDK" ANDROID_SDK_ROOT="$SDK"
+# Ignore JAVA_HOME from untrusted project files and discover the actual JDK.
+unset JAVA_HOME
 JAVA_BIN="$(command -v java || true)"
-if [ -z "$JAVA_BIN" ]; then
- echo '{"state":"failed","error":"Java 17 is missing from the Railway worker image PATH."}' > "$BASE/status.json"
- exit 2
+JAVA_HOME=""
+if [ -n "$JAVA_BIN" ]; then
+ JAVA_REAL="$(readlink -f "$JAVA_BIN" 2>/dev/null || true)"
+ if [ -n "$JAVA_REAL" ]; then
+  CANDIDATE_HOME="$(dirname "$(dirname "$JAVA_REAL")")"
+  if [ -x "$CANDIDATE_HOME/bin/java" ]; then JAVA_HOME="$CANDIDATE_HOME"; fi
+ fi
 fi
-JAVA_REAL="$(readlink -f "$JAVA_BIN")"
-JAVA_HOME="$(dirname "$(dirname "$JAVA_REAL")")"
-if [ ! -x "$JAVA_HOME/bin/java" ]; then JAVA_HOME=/opt/java/openjdk; fi
-if [ ! -x "$JAVA_HOME/bin/java" ]; then
- echo '{"state":"failed","error":"Could not locate a valid Java installation in the Railway worker image."}' > "$BASE/status.json"
+for CANDIDATE_HOME in /opt/java/openjdk /usr/lib/jvm/java-17-openjdk-amd64 /usr/lib/jvm/temurin-17-jdk-amd64; do
+ if [ -z "$JAVA_HOME" ] && [ -x "$CANDIDATE_HOME/bin/java" ]; then JAVA_HOME="$CANDIDATE_HOME"; fi
+done
+if [ -z "$JAVA_HOME" ] || [ ! -x "$JAVA_HOME/bin/java" ]; then
+ echo '{"state":"failed","error":"Java 17 is missing or invalid in the Railway worker image. The build environment could not locate a usable JDK."}' > "$BASE/status.json"
  exit 2
 fi
 export JAVA_HOME
 export PATH="$JAVA_HOME/bin:$SDK/platform-tools:$PATH"
+# Remove Java-home overrides embedded in uploaded projects or custom wrappers.
+python3 - "$ROOT" <<'PYJAVA'
+import os,re,sys
+root=sys.argv[1]
+for base,dirs,files in os.walk(root):
+ dirs[:] = [d for d in dirs if d not in (".git","build",".gradle")]
+ for name in files:
+  if name == "gradle.properties":
+   p=os.path.join(base,name)
+   try:
+    with open(p,encoding="utf-8") as f: original=f.read()
+    cleaned=re.sub(r"(?m)^\\s*(?:org\\.gradle\\.java\\.home|systemProp\\.java\\.home)\\s*=.*(?:\\n|$)","",original)
+    if cleaned != original:
+     with open(p,"w",encoding="utf-8") as f: f.write(cleaned)
+     print("Removed project-specific Java home override from "+p)
+   except (OSError,UnicodeError): pass
+  elif name == "gradlew":
+   p=os.path.join(base,name)
+   try:
+    with open(p,encoding="utf-8") as f: original=f.read()
+    cleaned=re.sub(r"(?m)^\\s*(?:export\\s+)?JAVA_HOME\\s*=.*(?:\\n|$)","",original)
+    if cleaned != original:
+     with open(p,"w",encoding="utf-8") as f: f.write(cleaned)
+     print("Removed invalid JAVA_HOME assignment from Gradle wrapper "+p)
+   except (OSError,UnicodeError): pass
+PYJAVA
 echo '{"state":"building"}' > "$BASE/status.json"
 RC=0
 if [ "$BUILD_KIND" = "flutter" ]; then
