@@ -81,7 +81,7 @@ for base,dirs,files in os.walk(root):
    p=os.path.join(base,name)
    try:
     with open(p,encoding="utf-8") as f: original=f.read()
-    cleaned=re.sub(r"(?m)^\\s*(?:org\\.gradle\\.java\\.home|systemProp\\.java\\.home)\\s*=.*(?:\\n|$)","",original)
+    cleaned=re.sub(r"(?m)^\s*(?:org\.gradle\.java\.home|systemProp\.java\.home)\s*=.*(?:\n|$)","",original)
     if cleaned != original:
      with open(p,"w",encoding="utf-8") as f: f.write(cleaned)
      print("Removed project-specific Java home override from "+p)
@@ -90,7 +90,7 @@ for base,dirs,files in os.walk(root):
    p=os.path.join(base,name)
    try:
     with open(p,encoding="utf-8") as f: original=f.read()
-    cleaned=re.sub(r"(?m)^\\s*(?:export\\s+)?JAVA_HOME\\s*=.*(?:\\n|$)","",original)
+    cleaned=re.sub(r"(?m)^\s*(?:export\s+)?JAVA_HOME\s*=.*(?:\n|$)","",original)
     if cleaned != original:
      with open(p,"w",encoding="utf-8") as f: f.write(cleaned)
      print("Removed invalid JAVA_HOME assignment from Gradle wrapper "+p)
