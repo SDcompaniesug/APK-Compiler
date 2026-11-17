@@ -26,8 +26,10 @@ export default async function handler(req, res) {
   const url = new URL(req.url || "/", "https://apk-compiler.local");
   req.query = Object.fromEntries(url.searchParams.entries());
   try {
-    if (url.pathname.startsWith("/api/auth/")) {
-      const authRoute = url.pathname.slice("/api/auth/".length);
+    if (url.pathname === "/api/auth" || url.pathname.startsWith("/api/auth/")) {
+      const authRoute = url.pathname === "/api/auth"
+        ? String(url.searchParams.get("route") || "")
+        : url.pathname.slice("/api/auth/".length);
       req.query.route = authRoute;
       if (req.method === "POST") await parseJson(req);
       return await auth(req, res);
