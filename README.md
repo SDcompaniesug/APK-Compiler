@@ -15,7 +15,7 @@ The Vercel Sandbox dependency and snapshot requirement are removed. The API enqu
 ## Services
 
 ### API service
-Use the repository root `Dockerfile`. Start command: `npm start`. It serves `public/index.html`, all `/api/*` routes, and `/health`.
+Use the repository root with Railway's Railpack builder. Start command: `npm start`. It serves `public/index.html`, all `/api/*` routes, and `/health`.
 
 ### Worker service
 Use the same repository and branch, with Dockerfile path `worker/Dockerfile`. It starts with `node worker.js`. Keep worker replicas at **1** initially; it processes one job at a time.
