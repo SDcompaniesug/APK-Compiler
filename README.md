@@ -15,7 +15,7 @@ The Vercel Sandbox dependency and snapshot requirement are removed. The API enqu
 ## Services
 
 ### API service
-Use the repository root with Railway's Railpack builder. Start command: `npm start`. It serves `public/index.html`, all `/api/*` routes, and `/health`.
+Use the repository root with Railway's Railpack builder. Start command: `npm start`. Public URL: `https://apk-compiler-api-production.up.railway.app`. It serves `public/index.html`, all `/api/*` routes, and `/health`.
 
 ### Worker service
 Use the same repository and branch, with Dockerfile path `worker/Dockerfile`. It starts with `node worker.js`. Keep worker replicas at **1** initially; it processes one job at a time.
@@ -31,13 +31,12 @@ Set these on the API service:
 - `AWS_ENDPOINT_URL_S3` — Neon S3 endpoint for the production branch.
 - `AWS_REGION` — Neon storage region.
 - `AWS_BUCKET` — `apk-compiler-files`.
-- `APP_ORIGIN` — optional full public origin for upload CORS.
 
 Set the database and storage variables on the worker service too. The worker does not need `AUTH_JWT_SECRET`. Railway supplies `PORT` and `RAILWAY_PUBLIC_DOMAIN`.
 
 ## Deploy
 
-1. Create an API service from `SDcompaniesug/APK-Compiler`, branch `railway-migration`, using the root Dockerfile.
+1. Create an API service from `SDcompaniesug/APK-Compiler`, branch `railway-migration`, using the repository root and Railpack builder.
 2. Create a worker service from the same repository and branch; set Dockerfile path to `worker/Dockerfile`.
 3. Add the required variables to both services.
 4. Keep worker replicas at 1.
