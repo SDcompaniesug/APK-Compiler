@@ -106,6 +106,7 @@ async function processJob(job){
     const message=String(error?.message||error).slice(-12000);
     console.error("Build failed",id,message);
     await sql.query("UPDATE build_jobs SET state='failed',error=$1,sandbox_name=NULL,updated_at=now() WHERE id=$2 AND state='building'",[message,id]).catch(()=>{});
+    await Promise.all(["apk.apk","aab.aab","icon.img"].map(name=>deleteObject("builds/"+id+"/"+name)));
     await deleteObject(uploadKey);
   }finally{
     await rm(base,{recursive:true,force:true}).catch(()=>{});
