@@ -1,5 +1,5 @@
-import { getAppIcon } from "./_shared.js";
-import { requireAuth } from "./_auth.js";
+import { getAppIcon } from "../lib/_shared.js";
+import { requireAuth } from "../lib/_auth.js";
 
 export default async function handler(req,res) {
   if (req.method !== "GET") {

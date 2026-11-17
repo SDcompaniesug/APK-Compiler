@@ -1,6 +1,6 @@
 import { neon } from "@neondatabase/serverless";
-import { getBuild, deleteBuild, json } from "./_shared.js";
-import { requireAuth } from "./_auth.js";
+import { getBuild, deleteBuild, json } from "../lib/_shared.js";
+import { requireAuth } from "../lib/_auth.js";
 
 export default async function handler(req,res) {
   let user;

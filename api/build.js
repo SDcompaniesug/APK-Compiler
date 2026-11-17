@@ -1,6 +1,6 @@
 import Busboy from "busboy";
-import { startBuild, startBuildFromBlob, json } from "./_shared.js";
-import { requireAuth } from "./_auth.js";
+import { startBuild, startBuildFromBlob, json } from "../lib/_shared.js";
+import { requireAuth } from "../lib/_auth.js";
 export const config = { api: { bodyParser: false } };
 
 async function readJson(req) {

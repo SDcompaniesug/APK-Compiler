@@ -1,5 +1,5 @@
-import { json, startBuild, startBuildFromBlob, getBuild } from "./_shared.js";
-import { requireAuth } from "./_auth.js";
+import { json, startBuild, startBuildFromBlob, getBuild } from "../lib/_shared.js";
+import { requireAuth } from "../lib/_auth.js";
 
 export const config = { api: { bodyParser: true } };
 
