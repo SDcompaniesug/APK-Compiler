@@ -1,0 +1,10 @@
+node_modules
+.git
+.env
+.env.*
+*.log
+.gradle
+**/.gradle
+**/build
+**/.dart_tool
+**/node_modules
