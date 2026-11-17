@@ -22,7 +22,7 @@ export async function createUpload(id,filename,userId){
   if(!/\.zip$/i.test(String(filename||"")))throw Object.assign(new Error("Choose a .zip project file."),{statusCode:400});
   const key="uploads/"+id+".zip",client=storage();await ensureBucketCors(client);
   const uploadUrl=await getSignedUrl(client,new PutObjectCommand({Bucket:process.env.AWS_BUCKET,Key:key,ContentType:"application/zip"}),{expiresIn:900});
-  const rows=await database().query("INSERT INTO build_jobs (id,user_id,state,output_kind,upload_key,created_at,updated_at,expires_at) VALUES ($1,$2,'queued','apk',$3,now(),now(),now()+interval '24 hours') ON CONFLICT (id) DO UPDATE SET upload_key=EXCLUDED.upload_key,updated_at=now() WHERE build_jobs.user_id=EXCLUDED.user_id RETURNING id",[id,userId,key]);
+  const rows=await database().query("INSERT INTO build_jobs (id,user_id,state,output_kind,upload_key,created_at,updated_at,expires_at) VALUES ($1,$2,'uploading','apk',$3,now(),now(),now()+interval '24 hours') ON CONFLICT (id) DO UPDATE SET upload_key=EXCLUDED.upload_key,updated_at=now() WHERE build_jobs.user_id=EXCLUDED.user_id RETURNING id",[id,userId,key]);
   if(!rows.length)throw Object.assign(new Error("Could not reserve this upload for your account."),{statusCode:409});
   return {pathname:key,uploadUrl,validUntil:Date.now()+900000,maxBytes:50*1024*1024};
 }
@@ -31,7 +31,8 @@ export async function startBuild(zip,output="apk",existingId=null,userId){
   if(!Buffer.isBuffer(zip)||zip.length<22||zip.length>50*1024*1024)throw Object.assign(new Error("Project ZIP must be between 22 bytes and 50 MB."),{statusCode:400});
   const id=existingId||newId(),key="uploads/"+id+".zip",client=storage();
   await client.send(new PutObjectCommand({Bucket:process.env.AWS_BUCKET,Key:key,Body:zip,ContentType:"application/zip"}));
-  try{await database().query("INSERT INTO build_jobs (id,user_id,state,output_kind,upload_key,created_at,updated_at,expires_at) VALUES ($1,$2,'queued',$3,$4,now(),now(),now()+interval '7 days') ON CONFLICT (id) DO UPDATE SET state='queued',output_kind=EXCLUDED.output_kind,upload_key=EXCLUDED.upload_key,sandbox_name=NULL,error=NULL,updated_at=now(),expires_at=now()+interval '7 days' WHERE build_jobs.user_id=EXCLUDED.user_id",[id,userId,output,key]);}
+  try{await database().query("INSERT INTO build_jobs (id,user_id,state,output_kind,upload_key,created_at,updated_at,expires_at) VALUES ($1,$2,'queued',$3,$4,now(),now(),now()+interval '7 days') ON CONFLICT (id) DO UPDATE SET state='queued',output_kind=EXCLUDED.output_kind,upload_key=EXCLUDED.upload_key,sandbox_name=NULL,error=NULL,updated_at=now(),expires_at=now()+interval '7 days' WHERE build_jobs.user_id=EXCLUDED.user_id RETURNING id",[id,userId,output,key]);
+    if(!rows.length)throw Object.assign(new Error("Build job could not be saved for this account."),{statusCode:409});}
   catch(error){try{await client.send(new DeleteObjectCommand({Bucket:process.env.AWS_BUCKET,Key:key}));}catch{}throw error;}
   return {jobId:id,state:"queued",statusUrl:"/api/status?id="+id};
 }
@@ -41,10 +42,10 @@ export async function startBuildFromBlob(pathname,output="apk",userId){
   const id=pathname.split("/")[1].replace(/\.zip$/,""),sql=database();
   const rows=await sql.query("SELECT id,state,upload_key FROM build_jobs WHERE id=$1 AND user_id=$2 LIMIT 1",[id,userId]);
   if(!rows.length||rows[0].upload_key!==pathname)throw Object.assign(new Error("Uploaded project was not found or has expired."),{statusCode:404});
-  if(rows[0].state!=="queued")throw Object.assign(new Error("This build has already been started or is no longer available."),{statusCode:409});
+  if(rows[0].state!=="uploading")throw Object.assign(new Error("This upload has already been started or is no longer available."),{statusCode:409});
   const head=await storage().send(new HeadObjectCommand({Bucket:process.env.AWS_BUCKET,Key:pathname}));
   if(!Number.isFinite(head.ContentLength)||head.ContentLength<22||head.ContentLength>50*1024*1024)throw Object.assign(new Error("Uploaded project ZIP must be between 22 bytes and 50 MB."),{statusCode:400});
-  await sql.query("UPDATE build_jobs SET output_kind=$1,updated_at=now(),expires_at=now()+interval '7 days' WHERE id=$2 AND user_id=$3 AND state='queued'",[output,id,userId]);
+  await sql.query("UPDATE build_jobs SET state='queued',output_kind=$1,updated_at=now(),expires_at=now()+interval '7 days' WHERE id=$2 AND user_id=$3 AND state='uploading'",[output,id,userId]);
   return {jobId:id,state:"queued",statusUrl:"/api/status?id="+id};
 }
 export async function getBuild(id,userId){
