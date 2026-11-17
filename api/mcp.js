@@ -6,7 +6,7 @@ export const config = { api: { bodyParser: true } };
 const tools = [
   {
     name: "start_android_build",
-    description: "Start an isolated Android build from a base64 project ZIP or private Blob upload. Supports Java, Kotlin, Jetpack Compose and Flutter projects; debug APK, AAB or both. ZIP maximum 50 MB.",
+    description: "Queue an Android build from a base64 project ZIP or private object-storage upload. A separate Railway worker processes the job. Supports Java, Kotlin, Jetpack Compose and Flutter projects; debug APK, AAB or both. ZIP maximum 50 MB.",
     inputSchema: {
       type: "object",
       properties: {
@@ -44,7 +44,7 @@ export default async function handler(req, res) {
   if (req.method === "GET") {
     return json(res, 200, {
       name: "APK Compiler",
-      version: "1.1.0",
+      version: "1.2.0",
       tools: tools.map(tool => tool.name),
       status: "online"
     });
