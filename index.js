@@ -9,11 +9,7 @@ import builds from "./api/builds.js";
 import cancelBuild from "./api/cancel.js";
 import ready from "./api/ready.js";
 import mcp from "./api/mcp.js";
-import authLogin from "./api/auth/login.js";
-import authRegister from "./api/auth/register.js";
-import authRefresh from "./api/auth/refresh.js";
-import authLogout from "./api/auth/logout.js";
-import authMe from "./api/auth/me.js";
+import auth from "./api/auth.js";
 import icon from "./api/icon.js";
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -30,11 +26,12 @@ export default async function handler(req, res) {
   const url = new URL(req.url || "/", "https://apk-compiler.local");
   req.query = Object.fromEntries(url.searchParams.entries());
   try {
-    if (url.pathname === "/api/auth/login") { await parseJson(req); return await authLogin(req, res); }
-    if (url.pathname === "/api/auth/register") { await parseJson(req); return await authRegister(req, res); }
-    if (url.pathname === "/api/auth/refresh") { await parseJson(req); return await authRefresh(req, res); }
-    if (url.pathname === "/api/auth/logout") { await parseJson(req); return await authLogout(req, res); }
-    if (url.pathname === "/api/auth/me") return await authMe(req, res);
+    if (url.pathname.startsWith("/api/auth/")) {
+      const authRoute = url.pathname.slice("/api/auth/".length);
+      req.query.route = authRoute;
+      if (req.method === "POST") await parseJson(req);
+      return await auth(req, res);
+    }
     if (url.pathname === "/api/icon") return await icon(req, res);
     if (url.pathname === "/api/build") { if ((req.headers["content-type"] || "").includes("application/json")) await parseJson(req); return await build(req, res); }
     if (url.pathname === "/api/upload-url") { await parseJson(req); return await uploadUrl(req, res); }
