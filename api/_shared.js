@@ -15,7 +15,7 @@ export async function createUpload(id,filename,userId){
   if(!/\.zip$/i.test(String(filename||"")))throw Object.assign(new Error("Choose a .zip project file."),{statusCode:400});
   const key="uploads/"+id+".zip";
   const uploadUrl="/api/upload?pathname="+encodeURIComponent(key);
-  const rows=await database().query("INSERT INTO build_jobs (id,user_id,state,output_kind,upload_key,sandbox_name,created_at,updated_at,expires_at) VALUES ($1,$2,'uploading','apk',$3,'railway-pending',now(),now(),now()+interval '24 hours') ON CONFLICT (id) DO UPDATE SET state='uploading',upload_key=EXCLUDED.upload_key,sandbox_name='railway-pending',updated_at=now() WHERE build_jobs.user_id=EXCLUDED.user_id RETURNING id",[id,userId,key]);
+  const rows=await database().query("INSERT INTO build_jobs (id,user_id,state,output_kind,upload_key,sandbox_name,created_at,updated_at,expires_at) VALUES ($1,$2,'queued','apk',$3,'railway-uploading',now(),now(),now()+interval '24 hours') ON CONFLICT (id) DO UPDATE SET state='queued',upload_key=EXCLUDED.upload_key,sandbox_name='railway-uploading',updated_at=now() WHERE build_jobs.user_id=EXCLUDED.user_id RETURNING id",[id,userId,key]);
   if(!rows.length)throw Object.assign(new Error("Could not reserve this upload for your account."),{statusCode:409});
   return {pathname:key,uploadUrl,validUntil:Date.now()+900000,maxBytes:50*1024*1024};
 }
@@ -23,13 +23,15 @@ export async function receiveUpload(pathname,req,res,userId){
   if(typeof pathname!=="string"||!/^uploads\/[a-f0-9]{32}\.zip$/.test(pathname))throw Object.assign(new Error("Invalid upload reference."),{statusCode:400});
   const length=Number(req.headers["content-length"]||0);
   if(!Number.isSafeInteger(length)||length<22||length>50*1024*1024)throw Object.assign(new Error("Project ZIP must be between 22 bytes and 50 MB."),{statusCode:413});
-  const rows=await database().query("SELECT id FROM build_jobs WHERE id=$1 AND user_id=$2 AND upload_key=$3 AND state='uploading' LIMIT 1",[pathname.split("/")[1].replace(/\.zip$/,""),userId,pathname]);
+  const rows=await database().query("SELECT id FROM build_jobs WHERE id=$1 AND user_id=$2 AND upload_key=$3 AND state='queued' AND sandbox_name='railway-uploading' LIMIT 1",[pathname.split("/")[1].replace(/\.zip$/,""),userId,pathname]);
   if(!rows.length)throw Object.assign(new Error("Upload was not found, expired, or already received."),{statusCode:404});
   let total=0;
   const {Transform}=await import("node:stream");
   const limiter=new Transform({transform(chunk,encoding,callback){total+=chunk.length;if(total>50*1024*1024){callback(new Error("Upload exceeds 50 MB."));return;}callback(null,chunk);},flush(callback){if(total!==length)callback(new Error("Upload size did not match Content-Length."));else callback();}});
   try{
     await storage().send(new PutObjectCommand({Bucket:process.env.AWS_BUCKET,Key:pathname,Body:req.pipe(limiter),ContentLength:length,ContentType:"application/zip"}));
+    const ready=await database().query("UPDATE build_jobs SET sandbox_name='railway-upload-ready',updated_at=now() WHERE id=$1 AND user_id=$2 AND state='queued' AND sandbox_name='railway-uploading' RETURNING id",[pathname.split("/")[1].replace(/\.zip$/,""),userId]);
+    if(!ready.length)throw Object.assign(new Error("Upload reservation is no longer active."),{statusCode:409});
     json(res,200,{success:true,pathname});
   }catch(error){throw Object.assign(new Error(error.message||"Could not store uploaded project."),{statusCode:400});}
 }
@@ -47,12 +49,12 @@ export async function startBuildFromBlob(pathname,output="apk",userId){
   validateOutput(output);
   if(typeof pathname!=="string"||!/^uploads\/[a-f0-9]{32}\.zip$/.test(pathname))throw Object.assign(new Error("Invalid uploaded project reference."),{statusCode:400});
   const id=pathname.split("/")[1].replace(/\.zip$/,""),sql=database();
-  const rows=await sql.query("SELECT id,state,upload_key FROM build_jobs WHERE id=$1 AND user_id=$2 LIMIT 1",[id,userId]);
+  const rows=await sql.query("SELECT id,state,upload_key,sandbox_name FROM build_jobs WHERE id=$1 AND user_id=$2 LIMIT 1",[id,userId]);
   if(!rows.length||rows[0].upload_key!==pathname)throw Object.assign(new Error("Uploaded project was not found or has expired."),{statusCode:404});
-  if(rows[0].state!=="uploading")throw Object.assign(new Error("This upload has already been started or is no longer available."),{statusCode:409});
+  if(rows[0].state!=="queued"||rows[0].sandbox_name!=="railway-upload-ready")throw Object.assign(new Error("This upload has not finished or has already been started."),{statusCode:409});
   const head=await storage().send(new HeadObjectCommand({Bucket:process.env.AWS_BUCKET,Key:pathname}));
   if(!Number.isFinite(head.ContentLength)||head.ContentLength<22||head.ContentLength>50*1024*1024)throw Object.assign(new Error("Uploaded project ZIP must be between 22 bytes and 50 MB."),{statusCode:400});
-  const queued=await sql.query("UPDATE build_jobs SET state='queued',output_kind=$1,updated_at=now(),expires_at=now()+interval '7 days' WHERE id=$2 AND user_id=$3 AND state='uploading' RETURNING id",[output,id,userId]);
+  const queued=await sql.query("UPDATE build_jobs SET state='queued',output_kind=$1,sandbox_name='railway-pending',updated_at=now(),expires_at=now()+interval '7 days' WHERE id=$2 AND user_id=$3 AND state='queued' AND sandbox_name='railway-upload-ready' RETURNING id",[output,id,userId]);
   if(!queued.length)throw Object.assign(new Error("This upload has already been claimed or is no longer available."),{statusCode:409});
   return {jobId:id,state:"queued",statusUrl:"/api/status?id="+id};
 }
