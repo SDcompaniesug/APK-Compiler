@@ -1,6 +1,6 @@
 import { neon } from "@neondatabase/serverless";
 import { S3Client, HeadBucketCommand, PutBucketCorsCommand } from "@aws-sdk/client-s3";
-import { json } from "./_shared.js";
+import { json } from "../lib/_shared.js";
 
 export default async function handler(req,res) {
   if (req.method !== "GET") return json(res,405,{error:"Use GET."});
