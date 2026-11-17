@@ -122,7 +122,7 @@ def apply(path):
   key=stripped.split("=",1)[0].strip() if "=" in stripped and not stripped.startswith(("#","!")) else ""
   if key in keys: continue
   out.append(line)
- out.extend(k+"="+v+"\\n" for k,v in settings.items())
+ out.extend(k+"="+v+"\n" for k,v in settings.items())
  os.makedirs(os.path.dirname(path),exist_ok=True)
  with open(path,"w",encoding="utf-8") as f: f.writelines(out)
  print("Applied memory-safe Gradle settings to "+path)
