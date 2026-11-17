@@ -1,7 +1,8 @@
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, rm, writeFile, chown, chmod } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { mkdir, readFile, rm, writeFile, chown, chmod, stat } from "node:fs/promises";
 import { neon } from "@neondatabase/serverless";
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 
@@ -81,11 +82,11 @@ async function processJob(job){
     const artifacts={};
     for(const key of ["apk","aab"]){
       if(!state[key])continue;
-      const bytes=await readFile(state[key]).catch(()=>null);
-      if(!bytes?.length)continue;
+      const info=await stat(state[key]).catch(()=>null);
+      if(!info?.size)continue;
       const objectKey="builds/"+id+"/"+key+(key==="apk"?".apk":".aab");
-      await s3.send(new PutObjectCommand({Bucket:bucket,Key:objectKey,Body:bytes,ContentType:key==="apk"?"application/vnd.android.package-archive":"application/octet-stream"}));
-      artifacts[key]={size:bytes.length,url:"/api/download?id="+id+"&file="+key};
+      await s3.send(new PutObjectCommand({Bucket:bucket,Key:objectKey,Body:createReadStream(state[key]),ContentLength:info.size,ContentType:key==="apk"?"application/vnd.android.package-archive":"application/octet-stream"}));
+      artifacts[key]={size:info.size,url:"/api/download?id="+id+"&file="+key};
     }
     if(state.appName)artifacts.appName=String(state.appName).slice(0,120);
     if(state.appIconBase64){
