@@ -27,6 +27,12 @@ async function runCommand(outputKind){
   const env={
     PATH:"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/android-sdk/platform-tools:/opt/android-sdk/cmdline-tools/latest/bin:/opt/flutter/bin",
     HOME:path.join(base,"home"),
+    TMPDIR:path.join(base,"tmp"),
+    TMP:path.join(base,"tmp"),
+    TEMP:path.join(base,"tmp"),
+    GRADLE_USER_HOME:path.join(base,"home",".gradle"),
+    ANDROID_USER_HOME:path.join(base,"home",".android"),
+    PUB_CACHE:path.join(base,"home",".pub-cache"),
     JAVA_HOME:process.env.JAVA_HOME||"/opt/java/openjdk",
     ANDROID_HOME:"/opt/android-sdk",
     ANDROID_SDK_ROOT:"/opt/android-sdk",
@@ -52,6 +58,7 @@ async function processJob(job){
     await mkdir(path.join(base,"input"),{recursive:true});
     await mkdir(path.join(base,"output"),{recursive:true});
     await mkdir(path.join(base,"home"),{recursive:true});
+    await mkdir(path.join(base,"tmp"),{recursive:true});
     await writeFile(path.join(base,"input","project.zip"),zip,{mode:0o600});
     const source=await readFile("/app/worker/run-build.sh");
     await writeFile(runner,source,{mode:0o755});
@@ -59,6 +66,7 @@ async function processJob(job){
     await chown(path.join(base,"input"),builderUid,builderGid);
     await chown(path.join(base,"output"),builderUid,builderGid);
     await chown(path.join(base,"home"),builderUid,builderGid);
+    await chown(path.join(base,"tmp"),builderUid,builderGid);
     await chown(path.join(base,"input","project.zip"),builderUid,builderGid);
     await chown(runner,builderUid,builderGid);
     await chmod(runner,0o755);
