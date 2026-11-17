@@ -96,6 +96,42 @@ for base,dirs,files in os.walk(root):
      print("Removed invalid JAVA_HOME assignment from Gradle wrapper "+p)
    except (OSError,UnicodeError): pass
 PYJAVA
+# Keep Gradle and Kotlin within the worker's memory budget. Uploaded projects
+# may request multi-gigabyte heaps or parallel workers, which can cause the
+# Railway container to OOM-kill the Gradle daemon during Kotlin compilation.
+python3 - "$ROOT" "$HOME/.gradle/gradle.properties" <<'PYMEM'
+import os,sys
+root,global_props=sys.argv[1:]
+settings={
+ "org.gradle.jvmargs":"-Xmx768m -XX:MaxMetaspaceSize=384m -Dfile.encoding=UTF-8",
+ "org.gradle.workers.max":"1",
+ "org.gradle.parallel":"false",
+ "org.gradle.caching":"false",
+ "kotlin.compiler.execution.strategy":"in-process",
+ "kotlin.incremental":"false"
+}
+def apply(path):
+ try:
+  with open(path,encoding="utf-8") as f: lines=f.readlines()
+ except FileNotFoundError: lines=[]
+ except (OSError,UnicodeError): return
+ keys=set(settings)
+ out=[]
+ for line in lines:
+  stripped=line.strip()
+  key=stripped.split("=",1)[0].strip() if "=" in stripped and not stripped.startswith(("#","!")) else ""
+  if key in keys: continue
+  out.append(line)
+ out.extend(k+"="+v+"\\n" for k,v in settings.items())
+ os.makedirs(os.path.dirname(path),exist_ok=True)
+ with open(path,"w",encoding="utf-8") as f: f.writelines(out)
+ print("Applied memory-safe Gradle settings to "+path)
+apply(global_props)
+for base,dirs,files in os.walk(root):
+ dirs[:] = [d for d in dirs if d not in (".git","build",".gradle")]
+ if "gradle.properties" in files:
+  apply(os.path.join(base,"gradle.properties"))
+PYMEM
 echo '{"state":"building"}' > "$BASE/status.json"
 RC=0
 if [ "$BUILD_KIND" = "flutter" ]; then
