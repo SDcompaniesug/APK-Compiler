@@ -45,7 +45,8 @@ export async function startBuildFromBlob(pathname,output="apk",userId){
   if(rows[0].state!=="uploading")throw Object.assign(new Error("This upload has already been started or is no longer available."),{statusCode:409});
   const head=await storage().send(new HeadObjectCommand({Bucket:process.env.AWS_BUCKET,Key:pathname}));
   if(!Number.isFinite(head.ContentLength)||head.ContentLength<22||head.ContentLength>50*1024*1024)throw Object.assign(new Error("Uploaded project ZIP must be between 22 bytes and 50 MB."),{statusCode:400});
-  await sql.query("UPDATE build_jobs SET state='queued',output_kind=$1,updated_at=now(),expires_at=now()+interval '7 days' WHERE id=$2 AND user_id=$3 AND state='uploading'",[output,id,userId]);
+  const queued=await sql.query("UPDATE build_jobs SET state='queued',output_kind=$1,updated_at=now(),expires_at=now()+interval '7 days' WHERE id=$2 AND user_id=$3 AND state='uploading' RETURNING id",[output,id,userId]);
+  if(!queued.length)throw Object.assign(new Error("This upload has already been claimed or is no longer available."),{statusCode:409});
   return {jobId:id,state:"queued",statusUrl:"/api/status?id="+id};
 }
 export async function getBuild(id,userId){
