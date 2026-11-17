@@ -110,7 +110,7 @@ async function claimJob(){
 }
 async function main(){
   console.log("APK Compiler worker online",workerId);
-  await sql.query("UPDATE build_jobs SET state='queued',sandbox_name='railway-pending',updated_at=now() WHERE state='building' AND updated_at<now()-interval '70 minutes'").catch(()=>{});
+  await sql.query("UPDATE build_jobs SET state='queued',sandbox_name='railway-pending',updated_at=now() WHERE state='building' AND sandbox_name=$1 AND updated_at<now()-interval '70 minutes'",[workerId]).catch(()=>{});
   for(;;){
     try{
       const job=await claimJob();
