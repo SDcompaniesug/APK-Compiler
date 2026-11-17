@@ -1,10 +1,13 @@
 {
   "name": "apk-compiler",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "worker": "node worker.js"
+  },
   "dependencies": {
-    "@vercel/sandbox": "^4.0.0",
     "@neondatabase/serverless": "^1.0.2",
     "@aws-sdk/client-s3": "^3.850.0",
     "@aws-sdk/s3-request-presigner": "^3.850.0",
