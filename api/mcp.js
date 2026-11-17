@@ -61,7 +61,7 @@ export default async function handler(req, res) {
         result: {
           protocolVersion: "2024-11-05",
           capabilities: { tools: {} },
-          serverInfo: { name: "apk-compiler", version: "1.1.0" }
+          serverInfo: { name: "apk-compiler", version: "1.2.0" }
         }
       });
     }
