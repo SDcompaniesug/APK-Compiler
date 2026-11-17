@@ -26,7 +26,7 @@ async function deleteObject(key){try{await s3.send(new DeleteObjectCommand({Buck
 async function runCommand(outputKind){
   const env={
     PATH:"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/android-sdk/platform-tools:/opt/android-sdk/cmdline-tools/latest/bin:/opt/flutter/bin",
-    HOME:"/home/builder",
+    HOME:path.join(base,"home"),
     JAVA_HOME:process.env.JAVA_HOME||"/opt/java/openjdk",
     ANDROID_HOME:"/opt/android-sdk",
     ANDROID_SDK_ROOT:"/opt/android-sdk",
@@ -51,12 +51,14 @@ async function processJob(job){
     await rm(base,{recursive:true,force:true});
     await mkdir(path.join(base,"input"),{recursive:true});
     await mkdir(path.join(base,"output"),{recursive:true});
+    await mkdir(path.join(base,"home"),{recursive:true});
     await writeFile(path.join(base,"input","project.zip"),zip,{mode:0o600});
     const source=await readFile("/app/worker/run-build.sh");
     await writeFile(runner,source,{mode:0o755});
     await chown(base,builderUid,builderGid);
     await chown(path.join(base,"input"),builderUid,builderGid);
     await chown(path.join(base,"output"),builderUid,builderGid);
+    await chown(path.join(base,"home"),builderUid,builderGid);
     await chown(path.join(base,"input","project.zip"),builderUid,builderGid);
     await chown(runner,builderUid,builderGid);
     await chmod(runner,0o755);
