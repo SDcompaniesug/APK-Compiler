@@ -139,21 +139,21 @@ PY
  if [ -f ./gradlew ]; then
   chmod +x ./gradlew
   GRADLE_CMD=(./gradlew)
- elif [ -x /tmp/gradle-8.9/bin/gradle ]; then
-  GRADLE_CMD=(/tmp/gradle-8.9/bin/gradle)
+ elif [ -x $BASE/tmp/gradle-8.9/bin/gradle ]; then
+  GRADLE_CMD=($BASE/tmp/gradle-8.9/bin/gradle)
  else
-  mkdir -p /tmp/gradle-8.9
-  if [ ! -x /tmp/gradle-8.9/bin/gradle ]; then
-   curl -fsSL https://services.gradle.org/distributions/gradle-8.9-bin.zip -o /tmp/gradle-8.9.zip >> "$BASE/build.log" 2>&1 || {
+  mkdir -p $BASE/tmp/gradle-8.9
+  if [ ! -x $BASE/tmp/gradle-8.9/bin/gradle ]; then
+   curl -fsSL https://services.gradle.org/distributions/gradle-8.9-bin.zip -o $BASE$BASE/tmp/gradle-8.9.zip >> "$BASE/build.log" 2>&1 || {
     echo '{"state":"failed","error":"Could not download Gradle 8.9 and the project ZIP does not include gradlew."}' > "$BASE/status.json"
     exit 2
    }
-   unzip -q -o /tmp/gradle-8.9.zip -d /tmp >> "$BASE/build.log" 2>&1 || {
+   unzip -q -o $BASE$BASE/tmp/gradle-8.9.zip -d /tmp >> "$BASE/build.log" 2>&1 || {
     echo '{"state":"failed","error":"Could not extract Gradle 8.9."}' > "$BASE/status.json"
     exit 2
    }
   fi
-  GRADLE_CMD=(/tmp/gradle-8.9/bin/gradle)
+  GRADLE_CMD=($BASE/tmp/gradle-8.9/bin/gradle)
  fi
  case "$OUTPUT_KIND" in
   apk) TASKS=(assembleDebug);;
@@ -184,15 +184,15 @@ PY
    # Run the exact Gradle version required by AGP directly. Re-invoking
    # gradlew after editing its properties can still pick up a stale cached
    # distribution in some wrapper setups, so use the downloaded binary.
-   GRADLE_HOME="/tmp/gradle-$REQUIRED_GRADLE"
+   GRADLE_HOME="$BASE/tmp/gradle-$REQUIRED_GRADLE"
    mkdir -p "$GRADLE_HOME"
    if [ ! -x "$GRADLE_HOME/bin/gradle" ]; then
-    curl -fsSL "https://services.gradle.org/distributions/gradle-$REQUIRED_GRADLE-bin.zip" -o "/tmp/gradle-$REQUIRED_GRADLE.zip" >> "$BASE/build.log" 2>&1 || {
+    curl -fsSL "https://services.gradle.org/distributions/gradle-$REQUIRED_GRADLE-bin.zip" -o "$BASE$BASE/tmp/gradle-$REQUIRED_GRADLE.zip" >> "$BASE/build.log" 2>&1 || {
      echo "Could not download required Gradle $REQUIRED_GRADLE." >> "$BASE/build.log"
      RC=1
     }
     if [ "$RC" -eq 0 ]; then
-     unzip -q -o "/tmp/gradle-$REQUIRED_GRADLE.zip" -d /tmp >> "$BASE/build.log" 2>&1 || RC=$?
+     unzip -q -o "$BASE$BASE/tmp/gradle-$REQUIRED_GRADLE.zip" -d /tmp >> "$BASE/build.log" 2>&1 || RC=$?
     fi
    fi
    if [ "$RC" -eq 0 ] && [ -x "$GRADLE_HOME/bin/gradle" ]; then
