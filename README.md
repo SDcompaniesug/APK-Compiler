@@ -1,62 +1,57 @@
 # APK Compiler
 
-A Vercel-hosted Android Gradle build service. Users upload a ZIP containing a Java, Kotlin, Jetpack Compose, Flutter, or mixed Android Gradle project and receive a debug APK, debug AAB, or both.
+APK Compiler builds Android Gradle, Java, Kotlin, Jetpack Compose, and Flutter projects uploaded as ZIP files. This branch contains the Railway migration.
 
-## Live service
+## Railway architecture
 
-- Web uploader: https://apk-compiler-sdcompaniesugs-projects.vercel.app/
-- Health: https://apk-compiler-sdcompaniesugs-projects.vercel.app/health
-- MCP endpoint: https://apk-compiler-sdcompaniesugs-projects.vercel.app/api/mcp
-- GitHub: https://github.com/SDcompaniesug/APK-Compiler
+- **API service:** Node.js HTTP server serving the existing web UI and API routes.
+- **Build worker:** separate Railway service using an Android SDK + Flutter image. It polls the existing Neon `build_jobs` queue and runs one build at a time.
+- **Database:** existing Neon PostgreSQL project `apk-compiler-storage`; existing auth and build tables are retained.
+- **Files:** existing private Neon Object Storage bucket `apk-compiler-files`; uploads and APK/AAB artifacts remain there.
+- **GitHub:** source remains in `SDcompaniesug/APK-Compiler`; deploy the `railway-migration` branch.
 
-## Architecture
+The Vercel Sandbox dependency and snapshot requirement are removed. The API enqueues builds; it does not run Gradle inside an HTTP request.
 
-- Vercel Node.js controller routes the web UI, upload signing, job status, MCP tools, and downloads.
-- Browser uploads ZIPs directly to the project's private Vercel Blob store using a short-lived signed PUT URL.
-- Each build runs in its own named Vercel Sandbox microVM restored from an Android SDK snapshot.
-- Build output is written to private Blob storage and streamed through the download endpoint.
-- Build jobs are addressed by random 32-character IDs.
+## Services
 
-## Supported workflow
+### API service
+Use the repository root `Dockerfile`. Start command: `npm start`. It serves `public/index.html`, all `/api/*` routes, and `/health`.
 
-1. Open the web uploader and choose a project ZIP (maximum 50 MB).
-2. Choose Debug APK, Debug AAB, or Both.
-3. The browser uploads directly to private Blob storage.
-4. The service starts an isolated Gradle build and shows queued/building/complete/failed status.
-5. Download the generated APK and/or AAB when the job completes.
+### Worker service
+Use the same repository and branch, with Dockerfile path `worker/Dockerfile`. It starts with `node worker.js`. Keep worker replicas at **1** initially; it processes one job at a time.
 
-## API
+## Required environment variables
 
-- POST /api/upload-url — JSON filename; returns a short-lived private Blob upload URL and pathname.
-- PUT uploadUrl — upload ZIP bytes directly to Blob storage with Content-Type: application/zip.
-- POST /api/build — JSON pathname and output (apk, aab, or both).
-- GET /api/status?id=jobId — job state and artifact download paths.
-- GET /api/download?id=jobId&file=apk|aab — streams the private artifact.
-- POST /api/mcp — MCP JSON-RPC endpoint exposing start_android_build, get_android_build_status, and apk_compiler_info.
+Set these on the API service:
 
-## Required Vercel configuration
+- `DATABASE_URL` — Neon PostgreSQL connection string.
+- `AUTH_JWT_SECRET` — random secret of at least 32 bytes; keep it stable across restarts.
+- `AWS_ACCESS_KEY_ID` — Neon Object Storage scoped credential API token.
+- `AWS_SECRET_ACCESS_KEY` — matching S3 secret from the same Neon credential.
+- `AWS_ENDPOINT_URL_S3` — Neon S3 endpoint for the production branch.
+- `AWS_REGION` — Neon storage region.
+- `AWS_BUCKET` — `apk-compiler-files`.
+- `APP_ORIGIN` — optional full public origin for upload CORS.
 
-- BLOB_READ_WRITE_TOKEN: connected private Blob store.
-- ANDROID_BUILD_SNAPSHOT_ID: snapshot containing Java 17, Android SDK platforms 33–35, matching build tools, and Gradle 8.7.
-- Vercel Sandbox OIDC access for the project.
-- Node.js 22 runtime.
+Set the database and storage variables on the worker service too. The worker does not need `AUTH_JWT_SECRET`. Railway supplies `PORT` and `RAILWAY_PUBLIC_DOMAIN`.
 
-The Android build snapshot is a separately managed Vercel Sandbox snapshot. Refresh the snapshot and update ANDROID_BUILD_SNAPSHOT_ID before its expiry.
+## Deploy
 
-## Security and limits
+1. Create an API service from `SDcompaniesug/APK-Compiler`, branch `railway-migration`, using the root Dockerfile.
+2. Create a worker service from the same repository and branch; set Dockerfile path to `worker/Dockerfile`.
+3. Add the required variables to both services.
+4. Keep worker replicas at 1.
+5. Test `/health`, account registration/login, upload, APK build, status polling, and download.
+6. Keep Vercel running until the complete end-to-end test succeeds.
 
-- ZIP uploads are constrained to 50 MB; expanded contents are constrained to 500 MB.
-- ZIP paths are checked before extraction.
-- Builds execute inside isolated Firecracker microVMs, not in the Vercel Function process.
-- Blob storage is private; artifact downloads pass through the service.
-- Debug builds only. Release signing and keystore handling are intentionally not supported.
-- Treat uploaded Android Gradle build scripts as untrusted code.
+## Build safety
 
+Uploaded Gradle and Flutter projects are untrusted code. The worker runs build commands as an unprivileged `builder` OS user, strips Railway/Neon credentials from the build subprocess environment, and processes one job at a time. This is credential separation, **not** a Firecracker microVM boundary; it is not equivalent to Vercel Sandbox isolation. Only build projects you trust, and do not include secrets or signing keys in uploaded projects.
 
-## Supported project types
+## Limits and behavior
 
-- **Native Android / Java / Kotlin:** standard Gradle Android projects.
-- **Jetpack Compose:** Kotlin Android Gradle projects using the Compose compiler/plugin and Compose dependencies; the existing `assembleDebug` and `bundleDebug` tasks are used.
-- **Flutter:** projects containing `pubspec.yaml` and an `android/` Gradle subproject. The isolated runner installs Flutter stable and missing Android SDK 36 prerequisites, resolves Dart packages, then builds a debug APK, AAB, or both.
-
-Flutter builds require outbound network access on the first build to fetch the Flutter SDK, Android SDK components, Dart packages and Gradle dependencies. All outputs are debug-signed; release signing is not supported.
+- Project ZIP: 50 MB maximum.
+- Expanded project: 500 MB maximum; unsafe paths and suspicious compression ratios are rejected.
+- One active build per worker replica.
+- Debug and release Gradle/Flutter tasks are supported; release signing depends on the uploaded project's own signing configuration.
+- Build artifacts remain private and are served through authenticated download routes.
